@@ -33,7 +33,7 @@ def infer(image_input):
 
     llama_q = f"""
     I'll give you a simple image caption, from i want you to provide a story that would fit well with the image:
-    '{clipi_result}'
+    '{clipi_result[0]}'
     
     """
     
