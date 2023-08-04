@@ -2,10 +2,13 @@ import gradio as gr
 import torch
 
 from PIL import Image
-from transformers import BlipProcessor, BlipForConditionalGeneration
+from transformers import InstructBlipProcessor, InstructBlipForConditionalGeneration
 
-processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
-model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", torch_dtype=torch.float16).to("cuda")
+model = InstructBlipForConditionalGeneration.from_pretrained("Salesforce/instructblip-vicuna-7b")
+processor = InstructBlipProcessor.from_pretrained("Salesforce/instructblip-vicuna-7b")
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
+model.to(device)
 
 import os 
 hf_token = os.environ.get('HF_TOKEN')
@@ -16,17 +19,28 @@ def infer(image_input):
     #img_url = 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/demo.jpg' 
     raw_image = Image.open(image_input).convert('RGB')
 
-    # unconditional image captioning
-    inputs = processor(raw_image, return_tensors="pt").to("cuda", torch.float16)
+    prompt = "Can you please describe what's happening in the image, and give information about the characters and the place ?"
+    inputs = processor(images=raw_image, text=prompt, return_tensors="pt").to(device)
+    
+    outputs = model.generate(
+        **inputs,
+        do_sample=False,
+        num_beams=5,
+        max_length=256,
+        min_length=1,
+        top_p=0.9,
+        repetition_penalty=1.5,
+        length_penalty=1.0,
+        temperature=1,
+    )
+    generated_text = processor.batch_decode(outputs, skip_special_tokens=True)[0].strip()
+    print(generated_text)
 
-    out = model.generate(**inputs)
-
-    caption = processor.decode(out[0], skip_special_tokens=True)
-    print(caption)
+   
 
     llama_q = f"""
     I'll give you a simple image caption, from i want you to provide a story that would fit well with the image:
-    '{caption}'
+    '{generated_text}'
     
     """
     
@@ -40,7 +54,7 @@ def infer(image_input):
     
     print(f"Llama2 result: {result}")
 
-    return caption, result
+    return generated_text, result
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
