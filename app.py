@@ -7,6 +7,7 @@ from transformers import BlipProcessor, BlipForConditionalGeneration
 processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-large")
 model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-large", torch_dtype=torch.float16).to("cuda")
 
+import os 
 hf_token = os.environ.get('HF_TOKEN')
 from gradio_client import Client
 client = Client("https://fffiloni-test-llama-api.hf.space/", hf_token=hf_token)
