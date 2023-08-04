@@ -46,7 +46,7 @@ def infer(image_input):
 
     result = get_text_after_colon(result)
 
-    return clipi_result, result
+    return result
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
@@ -66,8 +66,8 @@ with gr.Blocks(css=css) as demo:
                 image_in = gr.Image(label="Image input", type="filepath")
                 submit_btn = gr.Button('Sumbit')
             with gr.Column():
-                caption = gr.Textbox(label="Generated Caption")
+                #caption = gr.Textbox(label="Generated Caption")
                 story = gr.Textbox(label="generated Story")
-    submit_btn.click(fn=infer, inputs=[image_in], outputs=[caption, story])
+    submit_btn.click(fn=infer, inputs=[image_in], outputs=[story])
 
 demo.queue().launch()
