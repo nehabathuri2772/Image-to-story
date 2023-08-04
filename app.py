@@ -61,10 +61,12 @@ with gr.Blocks(css=css) as demo:
             Upload an image, get a story ! 
             """
         )
-        image_in = gr.Image(label="Image input", type="filepath")
-        submit_btn = gr.Button('Sumbit')
-        caption = gr.Textbox(label="Generated Caption")
-        story = gr.Textbox(label="generated Story")
+        with gr.Row():
+            with gr.Column():
+                image_in = gr.Image(label="Image input", type="filepath")
+                submit_btn = gr.Button('Sumbit')
+            caption = gr.Textbox(label="Generated Caption")
+            story = gr.Textbox(label="generated Story")
     submit_btn.click(fn=infer, inputs=[image_in], outputs=[caption, story])
 
 demo.queue().launch()
