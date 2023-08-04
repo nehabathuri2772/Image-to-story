@@ -37,7 +37,7 @@ with gr.Blocks(css=css) as demo:
             [![Duplicate this Space](https://huggingface.co/datasets/huggingface/badges/raw/main/duplicate-this-space-sm.svg)](https://huggingface.co/spaces/fffiloni/SplitTrack2MusicGen?duplicate=true) for longer audio, more control and no queue.</p>
             """
         )
-        image_in = gr.Image(label="Image input")
+        image_in = gr.Image(label="Image input", type="filepath")
         submit_btn = gr.Button('Sumbit')
         story = gr.Textbox(label="Generated Story")
     submit_btn.click(fn=infer, inputs=[image_in], outputs=[story])
