@@ -1,6 +1,6 @@
 import gradio as gr
 import torch
-import requests
+
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
 
@@ -9,7 +9,7 @@ model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-capt
 
 def infer(image_input):
     #img_url = 'https://storage.googleapis.com/sfr-vision-language-research/BLIP/demo.jpg' 
-    raw_image = Image.open(requests.get(image_input, stream=True).raw).convert('RGB')
+    raw_image = Image.open(image_input).convert('RGB')
 
     # unconditional image captioning
     inputs = processor(raw_image, return_tensors="pt").to("cuda", torch.float16)
