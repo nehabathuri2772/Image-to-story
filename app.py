@@ -25,7 +25,7 @@ def infer(image_input):
     clipi_result = clipi_client.predict(
     				image_input,	# str (filepath or URL to image) in 'parameter_3' Image component
     				"best",	# str in 'Select mode' Radio component
-    				6,	# int | float (numeric value between 2 and 24) in 'best mode max flavors' Slider component
+    				4,	# int | float (numeric value between 2 and 24) in 'best mode max flavors' Slider component
     				api_name="/clipi2"
     )
     print(clipi_result)
