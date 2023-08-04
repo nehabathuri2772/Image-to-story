@@ -7,6 +7,18 @@ client = Client("https://fffiloni-test-llama-api.hf.space/", hf_token=hf_token)
 
 clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
 
+def get_text_after_colon(input_text):
+    # Find the first occurrence of ":"
+    colon_index = input_text.find(":")
+    
+    # Check if ":" exists in the input_text
+    if colon_index != -1:
+        # Extract the text after the colon
+        result_text = input_text[colon_index + 1:].strip()
+        return result_text
+    else:
+        # Return the original text if ":" is not found
+        return input_text
 
 def infer(image_input):
     
@@ -31,6 +43,8 @@ def infer(image_input):
     )
 
     print(f"Llama2 result: {result}")
+
+    result = get_text_after_colon(result)
 
     return clipi_result, result
 
