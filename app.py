@@ -25,11 +25,8 @@ def infer(image_input):
     print(caption)
 
     llama_q = f"""
-    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image.
-    
-    Here's the image description :
-    
-    {caption}
+    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image:
+    '{caption}'
     
     """
     
