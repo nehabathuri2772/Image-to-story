@@ -57,8 +57,8 @@ with gr.Blocks(css=css) as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown(
             """
-            # Image to Story
-            Upload an image, get a story ! 
+            <h1>Image to Story</h1>
+            <p>Upload an image, get a story made by Llama2 !</p>
             """
         )
         with gr.Row():
