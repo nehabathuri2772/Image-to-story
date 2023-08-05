@@ -64,7 +64,7 @@ with gr.Blocks(css=css) as demo:
         with gr.Row():
             with gr.Column():
                 image_in = gr.Image(label="Image input", type="filepath")
-                submit_btn = gr.Button('Sumbit')
+                submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
                 story = gr.Textbox(label="generated Story")
