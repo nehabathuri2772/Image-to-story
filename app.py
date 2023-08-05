@@ -68,6 +68,12 @@ with gr.Blocks(css=css) as demo:
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
                 story = gr.Textbox(label="generated Story")
+        gr.Examples(examples=[["./examples/crabby.png"],["./examples/hopper.jpeg"]],
+                    fn=infer,
+                    inputs=[image_in],
+                    outputs=[story],
+                    cache_examples=True
+                   )
     submit_btn.click(fn=infer, inputs=[image_in], outputs=[story])
 
-demo.queue().launch()
+demo.queue(max_size=12).launch()
