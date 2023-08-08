@@ -33,7 +33,8 @@ def infer(image_input):
    
 
     llama_q = f"""
-    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image, be creative:
+    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image. Please be creative and only generate a fictional story. 
+    Here's the image description: 
     '{clipi_result[0]}'
     
     """
@@ -118,7 +119,7 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=512)
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
