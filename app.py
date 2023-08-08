@@ -1,6 +1,6 @@
 import gradio as gr
 from share_btn import community_icon_html, loading_icon_html, share_js
-
+import re
 import os 
 hf_token = os.environ.get('HF_TOKEN')
 from gradio_client import Client
@@ -48,7 +48,10 @@ def infer(image_input):
 
     result = get_text_after_colon(result)
 
-    return result, gr.Group.update(visible=True)
+    # Use regular expressions to find new lines and insert spaces between paragraphs
+    new_text = re.sub(r"\n\s+", "\n \n", result)
+
+    return new_text, gr.Group.update(visible=True)
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
