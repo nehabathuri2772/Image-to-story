@@ -33,7 +33,7 @@ def infer(image_input, audience):
    
 
     llama_q = f"""
-    I'll give you a simple image caption, from i want you to provide a story for a {audience} audience that would fit well with the image. Please be creative and only generate a fictional story. 
+    I'll give you a simple image caption, please provide a story for a {audience} audience that would fit well with the image. Please be creative and only generate a fictional story  that promotes inclusivity, diversity, and respect for all individuals, regardless of their background or beliefs. 
     Here's the image description: 
     '{clipi_result[0]}'
     
