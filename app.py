@@ -48,8 +48,8 @@ def infer(image_input):
 
     result = get_text_after_colon(result)
 
-    # Split the text into paragraphs based on new lines
-    paragraphs = result.split('\n\n')
+    # Split the text into paragraphs based on actual line breaks
+    paragraphs = result.split('\n')
     
     # Join the paragraphs back with an extra empty line between each paragraph
     formatted_text = '\n\n'.join(paragraphs)
