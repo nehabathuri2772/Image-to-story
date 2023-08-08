@@ -33,7 +33,7 @@ def infer(image_input):
    
 
     llama_q = f"""
-    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image:
+    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image, be creative:
     '{clipi_result[0]}'
     
     """
@@ -118,7 +118,7 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in")
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
@@ -128,14 +128,14 @@ with gr.Blocks(css=css) as demo:
                     community_icon = gr.HTML(community_icon_html)
                     loading_icon = gr.HTML(loading_icon_html)
                     share_button = gr.Button("Share to community", elem_id="share-btn")
-        """
+        
         gr.Examples(examples=[["./examples/crabby.png"],["./examples/hopper.jpeg"]],
                     fn=infer,
                     inputs=[image_in],
                     outputs=[story, share_group],
                     cache_examples=True
                    )
-        """
+        
     submit_btn.click(fn=infer, inputs=[image_in], outputs=[story, share_group])
     share_button.click(None, [], [], _js=share_js)
 
