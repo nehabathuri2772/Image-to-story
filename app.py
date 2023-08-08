@@ -126,7 +126,7 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=512)
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=440)
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
