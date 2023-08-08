@@ -128,13 +128,14 @@ with gr.Blocks(css=css) as demo:
                     community_icon = gr.HTML(community_icon_html)
                     loading_icon = gr.HTML(loading_icon_html)
                     share_button = gr.Button("Share to community", elem_id="share-btn")
-        
+        """
         gr.Examples(examples=[["./examples/crabby.png"],["./examples/hopper.jpeg"]],
                     fn=infer,
                     inputs=[image_in],
                     outputs=[story, share_group],
                     cache_examples=True
                    )
+        """
     submit_btn.click(fn=infer, inputs=[image_in], outputs=[story, share_group])
     share_button.click(None, [], [], _js=share_js)
 
