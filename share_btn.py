@@ -38,7 +38,7 @@ share_js = """async () => {
 	}
     
     const gradioEl = document.querySelector("gradio-app").shadowRoot || document.querySelector('body > gradio-app');
-    const inputImgEl = gradioEl.querySelector('#image_in img');
+    const inputImgEl = gradioEl.querySelector('#image-in img');
     const outputTxt = gradioEl.querySelector('#story textarea').value;
     
     const shareBtnEl = gradioEl.querySelector('#share-btn');
