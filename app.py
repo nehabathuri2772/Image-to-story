@@ -29,11 +29,11 @@ def infer(image_input):
     				4,	# int | float (numeric value between 2 and 24) in 'best mode max flavors' Slider component
     				api_name="/clipi2"
     )
-    print(clipi_result)
+    print(clipi_result, audience)
    
 
     llama_q = f"""
-    I'll give you a simple image caption, from i want you to provide a story that would fit well with the image. Please be creative and only generate a fictional story. 
+    I'll give you a simple image caption, from i want you to provide a story for a {audience} audience that would fit well with the image. Please be creative and only generate a fictional story. 
     Here's the image description: 
     '{clipi_result[0]}'
     
@@ -126,7 +126,8 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=440)
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
+                audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
@@ -137,14 +138,14 @@ with gr.Blocks(css=css) as demo:
                     loading_icon = gr.HTML(loading_icon_html)
                     share_button = gr.Button("Share to community", elem_id="share-btn")
         
-        gr.Examples(examples=[["./examples/crabby.png"],["./examples/hopper.jpeg"]],
+        gr.Examples(examples=[["./examples/crabby.png", "Children"],["./examples/hopper.jpeg", "Adult"]],
                     fn=infer,
-                    inputs=[image_in],
+                    inputs=[image_in, audience],
                     outputs=[story, share_group],
                     cache_examples=True
                    )
         
-    submit_btn.click(fn=infer, inputs=[image_in], outputs=[story, share_group])
+    submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story, share_group])
     share_button.click(None, [], [], _js=share_js)
 
 demo.queue(max_size=12).launch()
