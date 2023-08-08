@@ -62,7 +62,7 @@ ${urlInputImg}
 ${outputTxt}
 `;
     const params = new URLSearchParams({
-        title: captionTxt,
+        title: outputTxt,
         description: descriptionMd,
     });
 	const paramsStr = params.toString();
