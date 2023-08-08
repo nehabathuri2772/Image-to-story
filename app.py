@@ -48,10 +48,14 @@ def infer(image_input):
 
     result = get_text_after_colon(result)
 
-    # Use regular expressions to find new lines and insert spaces between paragraphs
-    new_text = re.sub(r"\n\s+", "\n \n", result)
+    # Split the text into paragraphs based on new lines
+    paragraphs = result.split('\n\n')
+    
+    # Join the paragraphs back with an extra empty line between each paragraph
+    formatted_text = '\n\n'.join(paragraphs)
 
-    return new_text, gr.Group.update(visible=True)
+
+    return formatted_text, gr.Group.update(visible=True)
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
