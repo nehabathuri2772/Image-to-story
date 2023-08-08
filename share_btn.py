@@ -44,9 +44,7 @@ share_js = """async () => {
     const shareBtnEl = gradioEl.querySelector('#share-btn');
     const shareIconEl = gradioEl.querySelector('#share-btn-share-icon');
     const loadingIconEl = gradioEl.querySelector('#share-btn-loading-icon');
-    if(!outputVideo){
-        return;
-    };
+    
     shareBtnEl.style.pointerEvents = 'none';
     shareIconEl.style.display = 'none';
     loadingIconEl.style.removeProperty('display');
