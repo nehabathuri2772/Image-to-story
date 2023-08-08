@@ -21,7 +21,7 @@ def get_text_after_colon(input_text):
         # Return the original text if ":" is not found
         return input_text
 
-def infer(image_input):
+def infer(image_input, audience):
     
     clipi_result = clipi_client.predict(
     				image_input,	# str (filepath or URL to image) in 'parameter_3' Image component
@@ -29,7 +29,7 @@ def infer(image_input):
     				4,	# int | float (numeric value between 2 and 24) in 'best mode max flavors' Slider component
     				api_name="/clipi2"
     )
-    print(clipi_result, audience)
+    print(clipi_result)
    
 
     llama_q = f"""
