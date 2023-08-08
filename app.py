@@ -1,4 +1,5 @@
 import gradio as gr
+from share_btn import community_icon_html, loading_icon_html, share_js
 
 import os 
 hf_token = os.environ.get('HF_TOKEN')
@@ -46,11 +47,65 @@ def infer(image_input):
 
     result = get_text_after_colon(result)
 
-    return result
+    return result, gr.Group.update(visible=True)
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
 a {text-decoration-line: underline; font-weight: 600;}
+a {text-decoration-line: underline; font-weight: 600;}
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+@keyframes spin {
+  from {
+      transform: rotate(0deg);
+  }
+  to {
+      transform: rotate(360deg);
+  }
+}
+#share-btn-container {
+  display: flex; 
+  padding-left: 0.5rem !important; 
+  padding-right: 0.5rem !important; 
+  background-color: #000000; 
+  justify-content: center; 
+  align-items: center; 
+  border-radius: 9999px !important; 
+  max-width: 13rem;
+}
+div#share-btn-container > div {
+    flex-direction: row;
+    background: black;
+    align-items: center;
+}
+#share-btn-container:hover {
+  background-color: #060606;
+}
+#share-btn {
+  all: initial; 
+  color: #ffffff;
+  font-weight: 600; 
+  cursor:pointer; 
+  font-family: 'IBM Plex Sans', sans-serif; 
+  margin-left: 0.5rem !important; 
+  padding-top: 0.5rem !important; 
+  padding-bottom: 0.5rem !important;
+  right:0;
+}
+#share-btn * {
+  all: unset;
+}
+#share-btn-container div:nth-child(-n+2){
+  width: auto !important;
+  min-height: 0px !important;
+}
+#share-btn-container .wrap {
+  display: none !important;
+}
+#share-btn-container.hidden {
+  display: none!important;
+}
 """
 
 with gr.Blocks(css=css) as demo:
@@ -63,17 +118,24 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath")
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image_in")
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
-                story = gr.Textbox(label="generated Story")
+                story = gr.Textbox(label="generated Story", elem_id="story")
+
+                with gr.Group(elem_id="share-btn-container", visible=False) as share_group:
+                    community_icon = gr.HTML(community_icon_html)
+                    loading_icon = gr.HTML(loading_icon_html)
+                    share_button = gr.Button("Share to community", elem_id="share-btn")
+        
         gr.Examples(examples=[["./examples/crabby.png"],["./examples/hopper.jpeg"]],
                     fn=infer,
                     inputs=[image_in],
-                    outputs=[story],
+                    outputs=[story, share_group],
                     cache_examples=True
                    )
-    submit_btn.click(fn=infer, inputs=[image_in], outputs=[story])
+    submit_btn.click(fn=infer, inputs=[image_in], outputs=[story, share_group])
+    share_button.click(None, [], [], _js=share_js)
 
 demo.queue(max_size=12).launch()
