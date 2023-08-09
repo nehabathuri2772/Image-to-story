@@ -40,6 +40,8 @@ share_js = """async () => {
     const gradioEl = document.querySelector("gradio-app").shadowRoot || document.querySelector('body > gradio-app');
     const inputImgEl = gradioEl.querySelector('#image-in img');
     const outputTxt = gradioEl.querySelector('#story textarea').value;
+    const wordsArray = outpuTxt.split(" ");
+    const firstSevenWords = wordsArray.slice(0, 7).join(" ");
     
     const shareBtnEl = gradioEl.querySelector('#share-btn');
     const shareIconEl = gradioEl.querySelector('#share-btn-share-icon');
@@ -56,13 +58,13 @@ share_js = """async () => {
     const descriptionMd = `
 
 #### Image input:
-${urlInputImg}
+<img src="${urlInputImg}" />
 
 #### Generated Story:
 ${outputTxt}
 `;
     const params = new URLSearchParams({
-        title: outputTxt,
+        title: firstSevenWords,
         description: descriptionMd,
     });
 	const paramsStr = params.toString();
