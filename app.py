@@ -22,7 +22,7 @@ def get_text_after_colon(input_text):
         return input_text
 
 def infer(image_input, audience):
-    
+    gr.Info('Calling CLIP Interrogator ...')
     clipi_result = clipi_client.predict(
     				image_input,	# str (filepath or URL to image) in 'parameter_3' Image component
     				"best",	# str in 'Select mode' Radio component
@@ -38,7 +38,7 @@ def infer(image_input, audience):
     '{clipi_result[0]}'
     
     """
-    
+    gr.Info('Calling Llama2 ...')
     result = client.predict(
     				llama_q,	# str in 'Message' Textbox component
     				api_name="/predict"
