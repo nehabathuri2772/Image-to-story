@@ -41,7 +41,7 @@ share_js = """async () => {
     const inputImgEl = gradioEl.querySelector('#image-in img');
     const outputTxt = gradioEl.querySelector('#story textarea').value;
     const wordsArray = outputTxt.split(" ");
-    const firstSevenWords = wordsArray.slice(0, 7).join(" ");
+    const firstWords = wordsArray.slice(0, 12).join(" ");
     
     const shareBtnEl = gradioEl.querySelector('#share-btn');
     const shareIconEl = gradioEl.querySelector('#share-btn-share-icon');
@@ -64,7 +64,7 @@ share_js = """async () => {
 ${outputTxt}
 `;
     const params = new URLSearchParams({
-        title: firstSevenWords,
+        title: firstWords,
         description: descriptionMd,
     });
 	const paramsStr = params.toString();
