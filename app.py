@@ -4,7 +4,7 @@ import re
 import os 
 hf_token = os.environ.get('HF_TOKEN')
 from gradio_client import Client
-client = Client("https://fffiloni-test-llama-api.hf.space/", hf_token=hf_token)
+client = Client("https://fffiloni-test-llama-api-debug.hf.space/", hf_token=hf_token)
 
 clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
 
@@ -41,6 +41,7 @@ def infer(image_input, audience):
     gr.Info('Calling Llama2 ...')
     result = client.predict(
     				llama_q,	# str in 'Message' Textbox component
+                    "I2S",
     				api_name="/predict"
     )
 
