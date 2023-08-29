@@ -115,6 +115,11 @@ div#share-btn-container > div {
 #share-btn-container.hidden {
   display: none!important;
 }
+
+div#story textarea {
+    font-size: 1.5em;
+    line-height: 1.4em;
+}
 """
 
 with gr.Blocks(css=css) as demo:
