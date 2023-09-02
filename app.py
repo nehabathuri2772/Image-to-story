@@ -133,11 +133,11 @@ with gr.Blocks(css=css) as demo:
         with gr.Row():
             with gr.Column():
                 image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
-                audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children", height=420)
+                audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
-                story = gr.Textbox(label="generated Story", elem_id="story")
+                story = gr.Textbox(label="generated Story", elem_id="story", height=420)
 
                 with gr.Group(elem_id="share-btn-container", visible=False) as share_group:
                     community_icon = gr.HTML(community_icon_html)
