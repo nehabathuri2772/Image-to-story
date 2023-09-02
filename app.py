@@ -81,7 +81,7 @@ a {text-decoration-line: underline; font-weight: 600;}
   justify-content: center; 
   align-items: center; 
   border-radius: 9999px !important; 
-  max-width: 13rem;
+  max-width: 15rem;
 }
 div#share-btn-container > div {
     flex-direction: row;
@@ -133,7 +133,7 @@ with gr.Blocks(css=css) as demo:
         with gr.Row():
             with gr.Column():
                 image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
-                audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
+                audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children", height=420)
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
@@ -142,7 +142,7 @@ with gr.Blocks(css=css) as demo:
                 with gr.Group(elem_id="share-btn-container", visible=False) as share_group:
                     community_icon = gr.HTML(community_icon_html)
                     loading_icon = gr.HTML(loading_icon_html)
-                    share_button = gr.Button("Share to community", elem_id="share-btn")
+                    share_button = gr.Button("Share with community", elem_id="share-btn")
         
         gr.Examples(examples=[["./examples/crabby.png", "Children"],["./examples/hopper.jpeg", "Adult"]],
                     fn=infer,
