@@ -3,8 +3,9 @@ title: Image To Story
 emoji: 👁
 colorFrom: pink
 colorTo: red
+python_version: 3.10.12
 sdk: gradio
-sdk_version: 3.39.0
+sdk_version: 3.47.1
 app_file: app.py
 pinned: false
 ---
