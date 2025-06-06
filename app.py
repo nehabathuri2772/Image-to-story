@@ -99,7 +99,7 @@ with gr.Blocks(css=css) as demo:
         )
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in", height=420)
+                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in")
                 audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
