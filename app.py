@@ -110,9 +110,9 @@ with gr.Blocks(css=css) as demo:
                     fn=infer,
                     inputs=[image_in, audience],
                     outputs=[story],
-                    cache_examples=True
+                    cache_examples=False
                    )
         
     submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story])
 
-demo.queue(max_size=12).launch()
+demo.queue(max_size=12).launch(ssr_mode=False)
