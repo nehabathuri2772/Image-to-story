@@ -1,3 +1,4 @@
+import spaces
 import gradio as gr
 import re
 import os 
@@ -18,6 +19,7 @@ model = AutoModelForCausalLM.from_pretrained(model_path, use_auth_token=hf_token
 
 clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
 
+@spaces.GPU
 def llama_gen_story(prompt):
 
     instruction = """[INST] <<SYS>>\nYou are a storyteller. You'll be given an image description and some keyword about the image. 
