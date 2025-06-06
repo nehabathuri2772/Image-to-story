@@ -1,5 +1,4 @@
 import gradio as gr
-from share_btn import community_icon_html, loading_icon_html, share_js
 import re
 import os 
 hf_token = os.environ.get('HF_TOKEN')
@@ -56,7 +55,7 @@ def infer(image_input, audience):
     formatted_text = '\n\n'.join(paragraphs)
 
 
-    return formatted_text, gr.Group.update(visible=True)
+    return formatted_text
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
@@ -138,20 +137,14 @@ with gr.Blocks(css=css) as demo:
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
                 story = gr.Textbox(label="generated Story", elem_id="story", height=420)
-
-                with gr.Group(elem_id="share-btn-container", visible=False) as share_group:
-                    community_icon = gr.HTML(community_icon_html)
-                    loading_icon = gr.HTML(loading_icon_html)
-                    share_button = gr.Button("Share with community", elem_id="share-btn")
         
         gr.Examples(examples=[["./examples/crabby.png", "Children"],["./examples/hopper.jpeg", "Adult"]],
                     fn=infer,
                     inputs=[image_in, audience],
-                    outputs=[story, share_group],
+                    outputs=[story],
                     cache_examples=True
                    )
         
-    submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story, share_group])
-    share_button.click(None, [], [], _js=share_js)
+    submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story])
 
 demo.queue(max_size=12).launch()
