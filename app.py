@@ -52,7 +52,7 @@ def get_text_after_colon(input_text):
 def infer(image_input, audience):
     gr.Info('Calling CLIP Interrogator ...')
 
-    clipi_result = client.predict(
+    clipi_result = clipi_client.predict(
 		image=handle_file(image_input),
 		mode="best",
 		best_max_flavors=4,
