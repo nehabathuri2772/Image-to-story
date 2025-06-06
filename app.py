@@ -2,7 +2,10 @@ import gradio as gr
 import re
 import os 
 hf_token = os.environ.get('HF_TOKEN')
-from gradio_client import Client
+
+from gradio_client import Client, handle_file
+
+clipi_client = Client("fffiloni/CLIP-Interrogator-2")
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
@@ -48,11 +51,12 @@ def get_text_after_colon(input_text):
 
 def infer(image_input, audience):
     gr.Info('Calling CLIP Interrogator ...')
-    clipi_result = clipi_client.predict(
-    				image_input,	# str (filepath or URL to image) in 'parameter_3' Image component
-    				"best",	# str in 'Select mode' Radio component
-    				4,	# int | float (numeric value between 2 and 24) in 'best mode max flavors' Slider component
-    				api_name="/clipi2"
+
+    clipi_result = client.predict(
+		image=handle_file(image_input),
+		mode="best",
+		best_max_flavors=4,
+		api_name="/clipi2"
     )
     print(clipi_result)
    
