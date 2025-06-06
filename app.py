@@ -11,7 +11,7 @@ model_path = "meta-llama/Llama-2-7b-chat-hf"
 tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, use_auth_token=hf_token)
 model = AutoModelForCausalLM.from_pretrained(model_path, use_auth_token=hf_token).half().cuda()
 
-client = Client("https://fffiloni-test-llama-api-debug.hf.space/", hf_token=hf_token)
+#client = Client("https://fffiloni-test-llama-api-debug.hf.space/", hf_token=hf_token)
 
 clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
 
