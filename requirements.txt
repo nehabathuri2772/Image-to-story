@@ -1,0 +1,8 @@
+accelerate
+bitsandbytes
+protobuf
+transformers
+torch==2.5.1
+scipy
+sentencepiece
+spaces
