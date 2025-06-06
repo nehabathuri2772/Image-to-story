@@ -104,7 +104,7 @@ with gr.Blocks(css=css) as demo:
                 submit_btn = gr.Button('Tell me a story')
             with gr.Column():
                 #caption = gr.Textbox(label="Generated Caption")
-                story = gr.Textbox(label="generated Story", elem_id="story", height=420)
+                story = gr.Textbox(label="generated Story", elem_id="story")
         
         gr.Examples(examples=[["./examples/crabby.png", "Children"],["./examples/hopper.jpeg", "Adult"]],
                     fn=infer,
