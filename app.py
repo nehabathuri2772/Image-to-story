@@ -3,9 +3,35 @@ import re
 import os 
 hf_token = os.environ.get('HF_TOKEN')
 from gradio_client import Client
+
+from transformers import AutoTokenizer, AutoModelForCausalLM
+
+model_path = "meta-llama/Llama-2-7b-chat-hf"
+
+tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, use_auth_token=hf_token)
+model = AutoModelForCausalLM.from_pretrained(model_path, use_auth_token=hf_token).half().cuda()
+
 client = Client("https://fffiloni-test-llama-api-debug.hf.space/", hf_token=hf_token)
 
 clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
+
+def llama_gen_story(prompt):
+
+    instruction = """[INST] <<SYS>>\nYou are a storyteller. You'll be given an image description and some keyword about the image. 
+            For that given you'll be asked to generate a story that you think could fit very well with the image provided.
+            Always answer with a cool story, while being safe as possible.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
+            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n\n{} [/INST]"""
+
+    
+    prompt = instruction.format(prompt)
+    
+    generate_ids = model.generate(tokenizer(prompt, return_tensors='pt').input_ids.cuda(), max_new_tokens=4096)
+    output_text = tokenizer.decode(generate_ids[0], skip_special_tokens=True)
+    #print(generate_ids)
+    #print(output_text)
+    pattern = r'\[INST\].*?\[/INST\]'
+    cleaned_text = re.sub(pattern, '', output_text, flags=re.DOTALL)
+    return cleaned_text
 
 def get_text_after_colon(input_text):
     # Find the first occurrence of ":"
@@ -38,11 +64,7 @@ def infer(image_input, audience):
     
     """
     gr.Info('Calling Llama2 ...')
-    result = client.predict(
-    				llama_q,	# str in 'Message' Textbox component
-                    "I2S",
-    				api_name="/predict"
-    )
+    result = llama_gen_story(llama_q)
 
     print(f"Llama2 result: {result}")
 
@@ -59,61 +81,7 @@ def infer(image_input, audience):
 
 css="""
 #col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
-a {text-decoration-line: underline; font-weight: 600;}
-a {text-decoration-line: underline; font-weight: 600;}
-.animate-spin {
-  animation: spin 1s linear infinite;
-}
-@keyframes spin {
-  from {
-      transform: rotate(0deg);
-  }
-  to {
-      transform: rotate(360deg);
-  }
-}
-#share-btn-container {
-  display: flex; 
-  padding-left: 0.5rem !important; 
-  padding-right: 0.5rem !important; 
-  background-color: #000000; 
-  justify-content: center; 
-  align-items: center; 
-  border-radius: 9999px !important; 
-  max-width: 15rem;
-}
-div#share-btn-container > div {
-    flex-direction: row;
-    background: black;
-    align-items: center;
-}
-#share-btn-container:hover {
-  background-color: #060606;
-}
-#share-btn {
-  all: initial; 
-  color: #ffffff;
-  font-weight: 600; 
-  cursor:pointer; 
-  font-family: 'IBM Plex Sans', sans-serif; 
-  margin-left: 0.5rem !important; 
-  padding-top: 0.5rem !important; 
-  padding-bottom: 0.5rem !important;
-  right:0;
-}
-#share-btn * {
-  all: unset;
-}
-#share-btn-container div:nth-child(-n+2){
-  width: auto !important;
-  min-height: 0px !important;
-}
-#share-btn-container .wrap {
-  display: none !important;
-}
-#share-btn-container.hidden {
-  display: none!important;
-}
+
 
 div#story textarea {
     font-size: 1.5em;
