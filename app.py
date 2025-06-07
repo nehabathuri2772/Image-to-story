@@ -21,6 +21,14 @@ clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
 
 @spaces.GPU
 def llama_gen_story(prompt):
+    """Generate a fictional story using the LLaMA 2 model based on a prompt.
+    
+    Args:
+        prompt: A string prompt containing an image description and story generation instructions.
+        
+    Returns:
+        A generated fictional story string with special formatting and tokens removed.
+    """
 
     instruction = """[INST] <<SYS>>\nYou are a storyteller. You'll be given an image description and some keyword about the image. 
             For that given you'll be asked to generate a story that you think could fit very well with the image provided.
@@ -52,6 +60,20 @@ def get_text_after_colon(input_text):
         return input_text
 
 def infer(image_input, audience):
+    """Generate a fictional story based on an image using CLIP Interrogator and LLaMA2.
+    
+    Args:
+        image_input: A file path to the input image to analyze.
+        audience: A string indicating the target audience, such as 'Children' or 'Adult'.
+    
+    Returns:
+        A formatted, multi-paragraph fictional story string related to the image content.
+        
+    Steps:
+        1. Use the CLIP Interrogator model to generate a semantic caption from the image.
+        2. Format a prompt asking the LLaMA2 model to write a story based on the caption.
+        3. Clean and format the story output for readability.
+    """
     gr.Info('Calling CLIP Interrogator ...')
 
     clipi_result = clipi_client.predict(
@@ -121,4 +143,4 @@ with gr.Blocks(css=css) as demo:
         
     submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story])
 
-demo.queue(max_size=12).launch(ssr_mode=False)
+demo.queue(max_size=12).launch(ssr_mode=False, mcp_server=True)
