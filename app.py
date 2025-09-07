@@ -197,5 +197,6 @@ with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
             """
         )
 
-demo.queue(concurrency_count=2, max_size=24).launch(ssr_mode=False)
+demo.queue().launch(ssr_mode=False)
+
 
