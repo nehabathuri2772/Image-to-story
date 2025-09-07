@@ -1,146 +1,201 @@
-import spaces
+# ---- Image -> Story (Free CPU, Qwen2.5 1.5B) ----
 import gradio as gr
 import re
-import os 
-hf_token = os.environ.get('HF_TOKEN')
+from PIL import Image
+import torch
+from transformers import (
+    AutoTokenizer, AutoModelForCausalLM,
+    VisionEncoderDecoderModel, ViTImageProcessor
+)
 
-from gradio_client import Client, handle_file
+# ------------- MODELS (free + ungated) -------------
+# Image captioner (small, CPU OK)
+CAPTION_MODEL_ID = "nlpconnect/vit-gpt2-image-captioning"
+cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_MODEL_ID)
+cap_processor = ViTImageProcessor.from_pretrained(CAPTION_MODEL_ID)
+cap_tokenizer = AutoTokenizer.from_pretrained(CAPTION_MODEL_ID)
 
-clipi_client = Client("fffiloni/CLIP-Interrogator-2")
+# Story model: Qwen 2.5 (1.5B Instruct) - CPU friendly
+STORY_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+story_tokenizer = AutoTokenizer.from_pretrained(STORY_MODEL_ID, use_fast=True)
+story_model = AutoModelForCausalLM.from_pretrained(
+    STORY_MODEL_ID,
+    device_map="cpu",
+    torch_dtype=torch.float32,
+    low_cpu_mem_usage=True
+)
 
-from transformers import AutoTokenizer, AutoModelForCausalLM
+# ------------- HELPERS -------------
+def word_count(s: str) -> int:
+    return len(re.findall(r"\b\w+\b", s))
 
-model_path = "meta-llama/Llama-2-7b-chat-hf"
+def smart_trim_to_max_words(text: str, max_words: int) -> str:
+    tokens = re.findall(r"\S+", text)
+    if len(tokens) <= max_words:
+        return text.strip()
+    clipped = " ".join(tokens[:max_words]).strip()
+    last_end = max(clipped.rfind("."), clipped.rfind("!"), clipped.rfind("?"))
+    if last_end >= int(max_words * 0.6):
+        clipped = clipped[: last_end + 1]
+    return clipped.strip()
 
-tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False, use_auth_token=hf_token)
-model = AutoModelForCausalLM.from_pretrained(model_path, use_auth_token=hf_token).half().cuda()
+def parse_title_and_story(text: str):
+    t = text.replace("\r\n", "\n").strip()
+    m = re.match(r'^\s*Title:\s*(.+?)\n\n(.*)$', t, flags=re.DOTALL)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", t
 
-#client = Client("https://fffiloni-test-llama-api-debug.hf.space/", hf_token=hf_token)
-
-clipi_client = Client("https://fffiloni-clip-interrogator-2.hf.space/")
-
-@spaces.GPU
-def llama_gen_story(prompt):
-    """Generate a fictional story using the LLaMA 2 model based on a prompt.
-    
-    Args:
-        prompt: A string prompt containing an image description and story generation instructions.
-        
-    Returns:
-        A generated fictional story string with special formatting and tokens removed.
-    """
-
-    instruction = """[INST] <<SYS>>\nYou are a storyteller. You'll be given an image description and some keyword about the image. 
-            For that given you'll be asked to generate a story that you think could fit very well with the image provided.
-            Always answer with a cool story, while being safe as possible.  Your answers should not include any harmful, unethical, racist, sexist, toxic, dangerous, or illegal content. Please ensure that your responses are socially unbiased and positive in nature.
-            If a question does not make any sense, or is not factually coherent, explain why instead of answering something not correct. If you don't know the answer to a question, please don't share false information.\n<</SYS>>\n\n{} [/INST]"""
-
-    
-    prompt = instruction.format(prompt)
-    
-    generate_ids = model.generate(tokenizer(prompt, return_tensors='pt').input_ids.cuda(), max_new_tokens=4096)
-    output_text = tokenizer.decode(generate_ids[0], skip_special_tokens=True)
-    #print(generate_ids)
-    #print(output_text)
-    pattern = r'\[INST\].*?\[/INST\]'
-    cleaned_text = re.sub(pattern, '', output_text, flags=re.DOTALL)
-    return cleaned_text
-
-def get_text_after_colon(input_text):
-    # Find the first occurrence of ":"
-    colon_index = input_text.find(":")
-    
-    # Check if ":" exists in the input_text
-    if colon_index != -1:
-        # Extract the text after the colon
-        result_text = input_text[colon_index + 1:].strip()
-        return result_text
-    else:
-        # Return the original text if ":" is not found
-        return input_text
-
-def infer(image_input, audience):
-    """Generate a fictional story based on an image using CLIP Interrogator and LLaMA2.
-    
-    Args:
-        image_input: A file path to the input image to analyze.
-        audience: A string indicating the target audience, such as 'Children' or 'Adult'.
-    
-    Returns:
-        A formatted, multi-paragraph fictional story string related to the image content.
-        
-    Steps:
-        1. Use the CLIP Interrogator model to generate a semantic caption from the image.
-        2. Format a prompt asking the LLaMA2 model to write a story based on the caption.
-        3. Clean and format the story output for readability.
-    """
-    gr.Info('Calling CLIP Interrogator ...')
-
-    clipi_result = clipi_client.predict(
-		image=handle_file(image_input),
-		mode="best",
-		best_max_flavors=4,
-		api_name="/clipi2"
+def caption_image_local(image_path: str) -> str:
+    img = Image.open(image_path).convert("RGB")
+    pixel_values = cap_processor(images=img, return_tensors="pt").pixel_values
+    output_ids = cap_model.generate(
+        pixel_values,
+        max_length=24,
+        num_beams=4,
+        no_repeat_ngram_size=2,
     )
-    print(clipi_result)
-   
+    caption = cap_tokenizer.decode(output_ids[0], skip_special_tokens=True)
+    return caption.strip()
 
-    llama_q = f"""
-    I'll give you a simple image caption, please provide a fictional story for a {audience} audience that would fit well with the image. Please be creative, do not worry and only generate a cool fictional story. 
-    Here's the image description: 
-    '{clipi_result}'
-    
-    """
-    gr.Info('Calling Llama2 ...')
-    result = llama_gen_story(llama_q)
+def build_user_prompt(image_desc: str, audience: str, story_type: str,
+                      min_words: int, max_words: int, gen_title: bool) -> str:
+    title_part = (
+        "Start with one line exactly like: Title: <concise, original title>\n"
+        "Then a blank line, then the story.\n"
+    ) if gen_title else (
+        "Do NOT include any title line. Start directly with the story.\n"
+    )
+    return f"""
+Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience based ONLY on this image description:
 
-    print(f"Llama2 result: {result}")
+{image_desc}
 
-    result = get_text_after_colon(result)
+Constraints:
+- Length: between {min_words} and {max_words} words.
+- Tone/genre: {story_type}.
+- No meta commentary or warnings.
+- Keep it self-contained and vivid.
 
-    # Split the text into paragraphs based on actual line breaks
-    paragraphs = result.split('\n')
-    
-    # Join the paragraphs back with an extra empty line between each paragraph
-    formatted_text = '\n\n'.join(paragraphs)
+Formatting:
+{title_part}
+If you include a title, put nothing else on the title line except the title itself.
+""".strip()
 
+def qwen_chat_prompt(user_text: str) -> str:
+    msgs = [
+        {"role": "system", "content": "You are a helpful, creative storyteller."},
+        {"role": "user", "content": user_text},
+    ]
+    return story_tokenizer.apply_chat_template(
+        msgs, tokenize=False, add_generation_prompt=True
+    )
 
-    return formatted_text
+def generate_story_with_qwen(user_text: str, temperature: float, top_p: float, max_words: int) -> str:
+    prompt_text = qwen_chat_prompt(user_text)
+    inputs = story_tokenizer(prompt_text, return_tensors="pt")
+    input_len = inputs["input_ids"].shape[1]
+    max_new_tokens = max(128, min(1200, int(max_words * 1.5)))
 
-css="""
-#col-container {max-width: 910px; margin-left: auto; margin-right: auto;}
+    with torch.no_grad():
+        outputs = story_model.generate(
+            **inputs,
+            do_sample=True,
+            temperature=float(temperature),
+            top_p=float(top_p),
+            repetition_penalty=1.05,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=story_tokenizer.eos_token_id,
+            pad_token_id=story_tokenizer.eos_token_id,
+        )
+    gen_ids = outputs[0][input_len:]
+    text = story_tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+    return text
 
+# ------------- CORE CALLBACK -------------
+def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
+    min_words = int(min_words)
+    max_words = int(max_words)
+    if min_words < 200: min_words = 200
+    if max_words > 1000: max_words = 1000
+    if min_words > max_words:
+        min_words, max_words = max_words, min_words
+        gr.Warning("Swapped min/max to keep a valid range (200–1000).")
 
-div#story textarea {
-    font-size: 1.5em;
-    line-height: 1.4em;
-}
+    if image_input is None:
+        gr.Warning("Please upload an image.")
+        return "", ""
+
+    gr.Info("Making a caption (free, local)…")
+    image_desc = caption_image_local(image_input)
+
+    user_prompt = build_user_prompt(image_desc, audience, story_type, min_words, max_words, gen_title)
+
+    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    raw = generate_story_with_qwen(user_prompt, temperature, top_p, max_words)
+
+    title, story = parse_title_and_story(raw)
+    story = "\n\n".join(p for p in story.split("\n") if p.strip())
+
+    wc = word_count(story)
+    if wc > max_words:
+        story = smart_trim_to_max_words(story, max_words)
+        wc = word_count(story)
+        gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
+    elif wc < min_words:
+        gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). Try lowering min or raising temperature.")
+
+    return title, story
+
+# ------------- UI -------------
+css = """
+#col-container {max-width: 980px; margin-left: auto; margin-right: auto;}
+div#story textarea { font-size: 1.05em; line-height: 1.5em; }
 """
 
-with gr.Blocks(css=css) as demo:
+with gr.Blocks(css=css, theme=gr.themes.Soft()) as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown(
-            """
-            <h1 style="text-align: center">Image to Story</h1>
-            <p style="text-align: center">Upload an image, get a story made by Llama2 !</p>
-            """
+            "<h1 style='text-align:center'>Image → Story (Free CPU • Qwen 2.5)</h1>"
+            "<p style='text-align:center'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
         )
+
         with gr.Row():
             with gr.Column():
-                image_in = gr.Image(label="Image input", type="filepath", elem_id="image-in")
+                image_in = gr.Image(label="Image input", type="filepath")
                 audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
-                submit_btn = gr.Button('Tell me a story')
-            with gr.Column():
-                #caption = gr.Textbox(label="Generated Caption")
-                story = gr.Textbox(label="generated Story", elem_id="story")
-        
-        gr.Examples(examples=[["./examples/crabby.png", "Children"],["./examples/hopper.jpeg", "Adult"]],
-                    fn=infer,
-                    inputs=[image_in, audience],
-                    outputs=[story],
-                    cache_examples=False
-                   )
-        
-    submit_btn.click(fn=infer, inputs=[image_in, audience], outputs=[story])
+                story_type = gr.Dropdown(
+                    label="Story Type",
+                    choices=["Adventure", "Comedy", "Drama", "Fantasy", "Romance"],
+                    value="Adventure"
+                )
+                min_words = gr.Slider(200, 1000, value=400, step=50, label="Min words (200–1000)")
+                max_words = gr.Slider(200, 1000, value=700, step=50, label="Max words (200–1000)")
+                gen_title = gr.Checkbox(value=True, label="Generate Title")
+                temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
+                top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top-p")
+                submit_btn = gr.Button('Tell me a story ✨')
 
-demo.queue(max_size=12).launch(ssr_mode=False, mcp_server=True)
+            with gr.Column():
+                title_out = gr.Textbox(label="Title", interactive=False, placeholder="(Title will appear here if enabled)")
+                story_out = gr.Textbox(label="Story", elem_id="story", lines=18)
+
+        submit_btn.click(
+            fn=infer,
+            inputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
+            outputs=[title_out, story_out]
+        )
+
+        gr.Markdown(
+            """
+            ---
+            **Credits & Citations**  
+            • Base idea inspired by: fffiloni/Image-to-Story (Hugging Face Space)  
+            • Models: `nlpconnect/vit-gpt2-image-captioning` (captioning) + `Qwen/Qwen2.5-1.5B-Instruct` (story)  
+            • Interface enhancements by <Your Name> for DS/CS553  
+            • LLM help acknowledged (ChatGPT)
+            """
+        )
+
+demo.queue(concurrency_count=2, max_size=24).launch(ssr_mode=False)
+
