@@ -1,8 +1,7 @@
-accelerate
-bitsandbytes
-protobuf
-transformers
-torch==2.5.1
-scipy
+gradio>=4.44.0
+gradio_client>=0.16.4
+transformers>=4.44.0
+accelerate>=0.33.0
+torch
 sentencepiece
-spaces
+Pillow
