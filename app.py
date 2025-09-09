@@ -30,7 +30,7 @@ story_tokenizer = AutoTokenizer.from_pretrained(STORY_MODEL_ID, use_fast=True)
 story_model = AutoModelForCausalLM.from_pretrained(
     STORY_MODEL_ID,
     device_map="cpu",
-    torch_dtype=torch.float32,
+    dtype=torch.float32,
     low_cpu_mem_usage=True,
 )
 
@@ -264,7 +264,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
                 story_out = gr.Textbox(
                     label="Story", elem_id="story", lines=20, show_copy_button=True
                 )
-                download_btn = gr.DownloadButton("📥 Download .txt", file_name="story.txt")
+                download_btn = gr.DownloadButton("📥 Download .txt")
 
         # Wire up events
         submit_btn.click(
@@ -293,4 +293,5 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
 
 if __name__ == "__main__":
     demo.queue().launch(ssr_mode=False)
+
 
