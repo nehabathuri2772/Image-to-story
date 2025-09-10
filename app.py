@@ -1,5 +1,5 @@
 # app.py — Image → Caption → Story (TinyLlama, CPU)
-# Uses radios styled like segmented buttons (works on older Gradio).
+# Radios styled as segmented buttons (accessible & clickable)
 
 import torch
 import gradio as gr
@@ -12,21 +12,16 @@ from transformers import (
 )
 
 # --------- Models ---------
-# Captioner (lightweight)
 CAPTION_ID = "nlpconnect/vit-gpt2-image-captioning"
 cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_ID)
 cap_proc  = ViTImageProcessor.from_pretrained(CAPTION_ID)
 cap_tok   = AutoTokenizer.from_pretrained(CAPTION_ID)
 cap_model.eval()
 
-# Story LLM (single model: TinyLlama)
 STORY_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
 story_llm = AutoModelForCausalLM.from_pretrained(
-    STORY_ID,
-    device_map="cpu",
-    torch_dtype=torch.float32,
-    low_cpu_mem_usage=True,
+    STORY_ID, device_map="cpu", torch_dtype=torch.float32, low_cpu_mem_usage=True
 )
 if story_llm.config.pad_token_id is None and story_tok.pad_token_id is None:
     story_tok.pad_token = story_tok.eos_token
@@ -36,13 +31,9 @@ story_llm.eval()
 # --------- Helpers ---------
 @torch.inference_mode()
 def caption_image(img: Image.Image, max_len: int = 20) -> str:
-    pixel_values = cap_proc(images=img, return_tensors="pt").pixel_values
+    pix = cap_proc(images=img, return_tensors="pt").pixel_values
     out = cap_model.generate(
-        pixel_values,
-        max_new_tokens=max_len,
-        num_beams=4,
-        do_sample=False,
-        eos_token_id=cap_tok.eos_token_id,
+        pix, max_new_tokens=max_len, num_beams=4, do_sample=False, eos_token_id=cap_tok.eos_token_id
     )
     return cap_tok.decode(out[0], skip_special_tokens=True).strip()
 
@@ -56,24 +47,14 @@ def build_prompt(caption: str, genre: str, audience: str, style: str, words: int
     )
 
 @torch.inference_mode()
-def generate_story(
-    image: Image.Image,
-    genre: str,
-    audience: str,
-    style: str,
-    temperature: float,
-    top_p: float,
-    max_new_tokens: int,
-    show_caption: bool,
-    seed: int,
-):
+def generate_story(image, genre, audience, style, temperature, top_p, max_new_tokens, show_caption, seed):
     if image is None:
         return "", "Please upload an image."
-
     torch.manual_seed(int(seed))
 
     cap = caption_image(image, max_len=20)
     prompt = build_prompt(cap, genre, audience, style, words=max(80, min(max_new_tokens, 300)))
+
     inputs = story_tok(prompt, return_tensors="pt")
     gen = story_llm.generate(
         **inputs,
@@ -88,23 +69,32 @@ def generate_story(
     story = story_tok.decode(gen[0], skip_special_tokens=True).strip()
     return (cap if show_caption else ""), story
 
-# --------- UI ---------
-PILL_CSS = """
-/* make Radio look like segmented buttons */
+# --------- UI (fixed, clickable segmented radios) ---------
+SEG_CSS = """
+/* Make Radio behave like segmented buttons without breaking clicks */
 .seg .wrap { display:flex; flex-wrap:wrap; gap:8px; }
-.seg input[type="radio"] { display:none; }
-.seg .item { margin:0; }     /* tighten spacing */
-.seg label {
-  padding:10px 14px; border:1px solid #d1d5db; border-radius:10px;
-  background:#ffffff; color:#111827; cursor:pointer;
+.seg .item { position: relative; }
+
+.seg input[type="radio"]{
+  position:absolute; inset:0; width:100%; height:100%;
+  margin:0; opacity:0; cursor:pointer;  /* keep it clickable */
 }
-.seg input[type="radio"]:checked + label {
-  background:#fb923c; border-color:#fb923c; color:white;  /* orange like your screenshot */
+
+.seg label{
+  display:inline-block;
+  padding:10px 14px;
+  border:1px solid #d1d5db; border-radius:10px;
+  background:#ffffff; color:#111827; user-select:none;
 }
+
+/* Selected state – supports both input+label and label>input DOM orders */
+.seg input[type="radio"]:focus + label { outline:2px solid #fb923c66; }
+.seg input[type="radio"]:checked + label { background:#fb923c; border-color:#fb923c; color:#fff; }
+.seg label:has(input[type="radio"]:checked) { background:#fb923c; border-color:#fb923c; color:#fff; }
 """
 
-with gr.Blocks(css=PILL_CSS) as demo:
-    gr.Markdown("## Image → Story (TinyLlama)\nUpload a picture, pick audience & genre, then generate a short story.")
+with gr.Blocks(css=SEG_CSS) as demo:
+    gr.Markdown("## Image → Story")
 
     with gr.Row():
         with gr.Column():
@@ -124,10 +114,7 @@ with gr.Blocks(css=PILL_CSS) as demo:
                 elem_classes=["seg"],
             )
 
-            style = gr.Textbox(
-                value="calm, peaceful, heartwarming, descriptive",
-                label="Style & tone (optional)",
-            )
+            style = gr.Textbox(value="calm", label="Style & tone (optional)")
 
             with gr.Row():
                 temperature = gr.Slider(0.1, 1.5, value=0.7, step=0.05, label="Creativity (temperature)")
