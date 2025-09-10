@@ -8,6 +8,7 @@ import tempfile
 from datetime import datetime
 
 import gradio as gr
+import numpy as np
 from PIL import Image
 import torch
 from transformers import (
@@ -15,6 +16,8 @@ from transformers import (
     AutoModelForCausalLM,
     VisionEncoderDecoderModel,
     ViTImageProcessor,
+    CLIPProcessor,
+    CLIPModel,
 )
 
 # ------------- MODELS (free + ungated) -------------
@@ -33,6 +36,11 @@ story_model = AutoModelForCausalLM.from_pretrained(
     dtype=torch.float32,
     low_cpu_mem_usage=True,
 )
+
+# CLIP for image-text grounding score (reranking)
+CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
+clip_model = CLIPModel.from_pretrained(CLIP_MODEL_ID)
+clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
 
 # ------------- HELPERS -------------
 
@@ -79,6 +87,7 @@ def build_user_prompt(
     min_words: int,
     max_words: int,
     gen_title: bool,
+    keywords=None,
 ) -> str:
     title_part = (
         "Start with one line exactly like: Title: <concise, original title>\n"
@@ -86,6 +95,15 @@ def build_user_prompt(
     ) if gen_title else (
         "Do NOT include any title line. Start directly with the story.\n"
     )
+
+    kw_line = ""
+    if keywords:
+        kw_str = ", ".join(keywords)
+        kw_line = (
+            "
+Grounding: In the FIRST paragraph, explicitly mention at least 3 of these words verbatim: "
+            + kw_str + "."
+        )
 
     return f"""
 Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience based ONLY on this image description:
@@ -95,7 +113,7 @@ Constraints:
 - Length: between {min_words} and {max_words} words.
 - Tone/genre: {story_type}.
 - No meta commentary or warnings.
-- Keep it self-contained and vivid.
+- Keep it self-contained and vivid.{kw_line}
 
 Formatting:
 {title_part}
@@ -134,6 +152,28 @@ def generate_story_with_qwen(user_text: str, temperature: float, top_p: float, m
     return text
 
 
+def extract_keywords(text, k: int = 8):
+    stop = {
+        "a","an","the","with","of","and","in","on","at","for","to","from","by","black","white","gray","colour","color"
+    }
+    words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]*", text)]
+    keep = []
+    for w in words:
+        if w not in stop and w not in keep:
+            keep.append(w)
+        if len(keep) >= k:
+            break
+    return keep
+
+
+def clip_score(image_path: str, text: str) -> float:
+    img = Image.open(image_path).convert("RGB")
+    inputs = clip_processor(text=[text], images=img, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        out = clip_model(**inputs)
+        score = out.logits_per_image[0].item()
+    return float(score)
+
 # ------------- CORE CALLBACKS -------------
 
 def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
@@ -156,15 +196,31 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
     gr.Info("Making a caption (free, local)…")
     image_desc = caption_image_local(image_input)
 
+    # Extract keywords from caption to ground the story
+    keywords = extract_keywords(image_desc)
+
     user_prompt = build_user_prompt(
-        image_desc, audience, story_type, min_words, max_words, gen_title
+        image_desc, audience, story_type, min_words, max_words, gen_title, keywords
     )
 
-    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
-    raw = generate_story_with_qwen(user_prompt, temperature, top_p, max_words)
+    gr.Info("Writing your story")
 
-    title, story = parse_title_and_story(raw)
-    story = "\n\n".join(p for p in story.split("\n") if p.strip())
+    # Generate several candidates and pick the one most aligned to the image using CLIP
+    candidates = []
+    for t in [temperature, min(temperature + 0.1, 1.3), max(temperature - 0.1, 0.3)]:
+        raw = generate_story_with_qwen(user_prompt, t, top_p, max_words)
+        ti, st = parse_title_and_story(raw)
+        st = "
+
+".join(p for p in st.split("
+") if p.strip())
+        candidates.append((ti, st))
+
+    scores = [clip_score(image_input, (ti + "
+
+" + st).strip()) for ti, st in candidates]
+    best_idx = int(np.argmax(scores))
+    title, story = candidates[best_idx]
 
     wc = word_count(story)
     if wc > max_words:
@@ -251,8 +307,8 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story") as demo:
                     value="Adventure",
                 )
                 with gr.Row():
-                    min_words = gr.Slider(200, 1000, value=400, step=50, label="Min words")
-                    max_words = gr.Slider(200, 1000, value=700, step=50, label="Max words")
+                    min_words = gr.Slider(200, 1000, value=400, step=50, label="Min words (200–1000)")
+                    max_words = gr.Slider(200, 1000, value=700, step=50, label="Max words (200–1000)")
                 gen_title = gr.Checkbox(value=True, label="Generate Title")
                 with gr.Row():
                     temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
@@ -305,4 +361,3 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story") as demo:
 
 if __name__ == "__main__":
     demo.queue().launch(ssr_mode=False)
-
