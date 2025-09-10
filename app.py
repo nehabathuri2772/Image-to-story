@@ -89,36 +89,40 @@ def build_user_prompt(
     gen_title: bool,
     keywords=None,
 ) -> str:
-    title_part = (
-        "Start with one line exactly like: Title: <concise, original title>\n"
-        "Then a blank line, then the story.\n"
-    ) if gen_title else (
-        "Do NOT include any title line. Start directly with the story.\n"
-    )
+    # Title instructions
+    if gen_title:
+        title_part = (
+            "Start with one line exactly like: Title: <concise, original title>\n"
+            "Then a blank line, then the story.\n"
+        )
+    else:
+        title_part = "Do NOT include any title line. Start directly with the story.\n"
 
+    # Optional grounding words (from the caption)
     kw_line = ""
     if keywords:
         kw_str = ", ".join(keywords)
         kw_line = (
-            "
-Grounding: In the FIRST paragraph, explicitly mention at least 3 of these words verbatim: "
+            "\nGrounding: In the FIRST paragraph, explicitly mention at least 3 of these words verbatim: "
             + kw_str + "."
         )
 
-    return f"""
-Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience based ONLY on this image description:
-{image_desc}
-
-Constraints:
-- Length: between {min_words} and {max_words} words.
-- Tone/genre: {story_type}.
-- No meta commentary or warnings.
-- Keep it self-contained and vivid.{kw_line}
-
-Formatting:
-{title_part}
-If you include a title, put nothing else on the title line except the title itself.
-""".strip()
+    # Build prompt using concatenated strings (no triple-quoted f-strings)
+    prompt = (
+        f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience "
+        f"based ONLY on this image description:\n"
+        f"{image_desc}\n\n"
+        "Constraints:\n"
+        f"- Length: between {min_words} and {max_words} words.\n"
+        f"- Tone/genre: {story_type}.\n"
+        "- No meta commentary or warnings.\n"
+        "- Keep it self-contained and vivid."
+        f"{kw_line}\n\n"
+        "Formatting:\n"
+        f"{title_part}"
+        "If you include a title, put nothing else on the title line except the title itself.\n"
+    )
+    return prompt.strip()
 
 
 def qwen_chat_prompt(user_text: str) -> str:
