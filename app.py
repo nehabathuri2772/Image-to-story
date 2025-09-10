@@ -1,6 +1,4 @@
-# ---- Image -> Story (Free CPU, Qwen2.5 1.5B) ----
-# Polished UI + small UX features (examples, copy/download, reset, nicer layout)
-# Drop this file in your Space as `app.py` and keep requirements.txt as-is.
+
 
 import os
 import re
@@ -34,7 +32,6 @@ story_model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
 )
 
-# ------------- HELPERS -------------
 
 def word_count(s: str) -> int:
     return len(re.findall(r"\b\w+\b", s))
@@ -153,14 +150,14 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         gr.Warning("Please upload an image.")
         return "", ""
 
-    gr.Info("Making a caption (free, local)…")
+    gr.Info("Making a caption…")
     image_desc = caption_image_local(image_input)
 
     user_prompt = build_user_prompt(
         image_desc, audience, story_type, min_words, max_words, gen_title
     )
 
-    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    gr.Info("Writing your story")
     raw = generate_story_with_qwen(user_prompt, temperature, top_p, max_words)
 
     title, story = parse_title_and_story(raw)
@@ -201,18 +198,32 @@ def reset_all():
 # ------------- UI -------------
 
 CSS = """
-/* Center + tighten the layout */
-#col-container {max-width: 1080px; margin-left: auto; margin-right: auto;}
-/* Bigger story text */
-#story textarea { font-size: 1.06em; line-height: 1.6em; }
-/* Make buttons a bit pill-shaped */
-button.svelte-1ipelgc { border-radius: 9999px; }
+:root {
+  --bg1: #f7fbff; /* pale blue */
+  --bg2: #fff8fb; /* blush pink */
+  --card: rgba(255,255,255,.65);
+  --stroke: rgba(120,120,180,.14);
+  --shadow: 0 8px 30px rgba(56, 43, 128, .08);
+}
+body { background: linear-gradient(135deg, var(--bg1), var(--bg2)); }
+#col-container { max-width: 1100px; margin-left: auto; margin-right: auto; padding: 8px; }
+/* Glass cards for a peaceful look */
+.glass { background: var(--card); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+         border: 1px solid var(--stroke); box-shadow: var(--shadow); border-radius: 20px; padding: 16px; }
+/* Calm reading experience */
+#story textarea { font-size: 1.06em; line-height: 1.65em; }
+/* Gradient heading text */
+.gradio-container .prose h1 { background: linear-gradient(90deg,#7dd3fc,#c4b5fd,#fbcfe8); -webkit-background-clip: text; background-clip: text; color: transparent; }
+/* Soft pill buttons */
+button { border-radius: 9999px !important; }
 """
 
 THEME = gr.themes.Soft(
-    primary_hue=gr.themes.colors.indigo,
-    secondary_hue=gr.themes.colors.violet,
-    radius_size=gr.themes.sizes.radius_lg,
+    primary_hue=gr.themes.colors.teal,
+    secondary_hue=gr.themes.colors.indigo,
+    neutral_hue=gr.themes.colors.gray,
+    radius_size=gr.themes.sizes.radius_xl,
+    spacing_size=gr.themes.sizes.spacing_md,
 )
 
 with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)") as demo:
@@ -220,15 +231,15 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
         gr.Markdown(
             """
             <div style="text-align:center">
-              <h1>🖼️ ➜ ✍️ Image → Story</h1>
-              <p style="opacity:.9">Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>
+              <h1> Image to Story</h1>
+              <p style="opacity:.9">Upload a Image, Get your Story.</p>
               <div style="font-size:14px; opacity:.8">Captioner: <code>nlpconnect/vit-gpt2-image-captioning</code> · Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code></div>
             </div>
             """
         )
 
         with gr.Row():
-            with gr.Column():
+            with gr.Column(elem_classes=["glass"]):
                 image_in = gr.Image(label="Drop image here", type="filepath", height=320)
                 audience = gr.Radio(
                     label="Target Audience", choices=["Children", "Adult"], value="Children"
@@ -247,7 +258,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
                     top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top‑p")
 
                 with gr.Row():
-                    submit_btn = gr.Button('✨ Tell me a story', variant="primary")
+                    submit_btn = gr.Button('Generate story', variant="primary")
                     reset_btn = gr.Button('↺ Reset')
 
                 # Example images (optional)
@@ -257,14 +268,14 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
                     label="Try an example image",
                 )
 
-            with gr.Column():
+            with gr.Column(elem_classes=["glass"]):
                 title_out = gr.Textbox(
-                    label="Title", interactive=False, placeholder="(Title will appear here if enabled)", show_copy_button=True
+                    label="Title", interactive=False, placeholder="(Title will appear here )", show_copy_button=True
                 )
                 story_out = gr.Textbox(
                     label="Story", elem_id="story", lines=20, show_copy_button=True
                 )
-                download_btn = gr.DownloadButton("📥 Download .txt")
+                download_btn = gr.DownloadButton("Download Story")
 
         # Wire up events
         submit_btn.click(
@@ -286,12 +297,10 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
             **Credits & Citations**  
             • Base idea: fffiloni/Image-to-Story (Hugging Face Space)  
             • Models: `nlpconnect/vit-gpt2-image-captioning` (captioning) + `Qwen/Qwen2.5-1.5B-Instruct` (story)  
-            • Interface enhancements by <your name>  
+            • Interface enhancements by nehabathuri 
             • LLM help acknowledged (ChatGPT)
             """
         )
 
 if __name__ == "__main__":
     demo.queue().launch(ssr_mode=False)
-
-
