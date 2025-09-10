@@ -1,8 +1,5 @@
-# app.py — Image ➜ Caption ➜ Story
-# Simple, clean version:
-# - Captioner: nlpconnect/vit-gpt2-image-captioning (CPU-friendly)
-# - Story LLM:  TinyLlama/TinyLlama-1.1B-Chat-v1.0 (single model, CPU)
-# - Genre & Audience as nice segmented buttons (not dropdowns)
+# app.py — Image → Caption → Story (TinyLlama, CPU)
+# Uses radios styled like segmented buttons (works on older Gradio).
 
 import torch
 import gradio as gr
@@ -14,16 +11,15 @@ from transformers import (
     AutoModelForCausalLM,
 )
 
-# ------------------ Models ------------------
-
-# 1) Image captioner (lightweight)
+# --------- Models ---------
+# Captioner (lightweight)
 CAPTION_ID = "nlpconnect/vit-gpt2-image-captioning"
 cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_ID)
 cap_proc  = ViTImageProcessor.from_pretrained(CAPTION_ID)
 cap_tok   = AutoTokenizer.from_pretrained(CAPTION_ID)
 cap_model.eval()
 
-# 2) Story writer (TinyLlama, single choice)
+# Story LLM (single model: TinyLlama)
 STORY_ID = "TinyLlama/TinyLlama-1.1B-Chat-v1.0"
 story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
 story_llm = AutoModelForCausalLM.from_pretrained(
@@ -32,17 +28,14 @@ story_llm = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.float32,
     low_cpu_mem_usage=True,
 )
-# some chat models lack a pad token; fall back to EOS
 if story_llm.config.pad_token_id is None and story_tok.pad_token_id is None:
     story_tok.pad_token = story_tok.eos_token
     story_llm.config.pad_token_id = story_tok.eos_token_id
 story_llm.eval()
 
-# ------------------ Helpers ------------------
-
+# --------- Helpers ---------
 @torch.inference_mode()
 def caption_image(img: Image.Image, max_len: int = 20) -> str:
-    """Generate a short caption for the image."""
     pixel_values = cap_proc(images=img, return_tensors="pt").pixel_values
     out = cap_model.generate(
         pixel_values,
@@ -53,8 +46,7 @@ def caption_image(img: Image.Image, max_len: int = 20) -> str:
     )
     return cap_tok.decode(out[0], skip_special_tokens=True).strip()
 
-def make_prompt(caption: str, genre: str, audience: str, style: str, words: int) -> str:
-    """Simple, model-agnostic instruction prompt."""
+def build_prompt(caption: str, genre: str, audience: str, style: str, words: int) -> str:
     return (
         f"You are a kind storyteller for {audience.lower()}.\n"
         f"Write a {genre.lower()} story of about {words} words.\n"
@@ -64,7 +56,7 @@ def make_prompt(caption: str, genre: str, audience: str, style: str, words: int)
     )
 
 @torch.inference_mode()
-def run_pipeline(
+def generate_story(
     image: Image.Image,
     genre: str,
     audience: str,
@@ -76,15 +68,12 @@ def run_pipeline(
     seed: int,
 ):
     if image is None:
-        return "", "Please upload an image first."
+        return "", "Please upload an image."
 
     torch.manual_seed(int(seed))
 
-    # 1) Caption
     cap = caption_image(image, max_len=20)
-
-    # 2) Story
-    prompt = make_prompt(cap, genre, audience, style, words=max(80, min(max_new_tokens, 300)))
+    prompt = build_prompt(cap, genre, audience, style, words=max(80, min(max_new_tokens, 300)))
     inputs = story_tok(prompt, return_tensors="pt")
     gen = story_llm.generate(
         **inputs,
@@ -97,34 +86,42 @@ def run_pipeline(
         repetition_penalty=1.05,
     )
     story = story_tok.decode(gen[0], skip_special_tokens=True).strip()
-
     return (cap if show_caption else ""), story
 
-# ------------------ UI ------------------
+# --------- UI ---------
+PILL_CSS = """
+/* make Radio look like segmented buttons */
+.seg .wrap { display:flex; flex-wrap:wrap; gap:8px; }
+.seg input[type="radio"] { display:none; }
+.seg .item { margin:0; }     /* tighten spacing */
+.seg label {
+  padding:10px 14px; border:1px solid #d1d5db; border-radius:10px;
+  background:#ffffff; color:#111827; cursor:pointer;
+}
+.seg input[type="radio"]:checked + label {
+  background:#fb923c; border-color:#fb923c; color:white;  /* orange like your screenshot */
+}
+"""
 
-with gr.Blocks(css="""
-/* Make segmented buttons look clean and roomy */
-.sbtn .wrap {gap: 8px;}
-.sbtn button {padding: 10px 14px; border-radius: 10px;}
-""") as demo:
-    gr.Markdown("## Image → Story")
+with gr.Blocks(css=PILL_CSS) as demo:
+    gr.Markdown("## Image → Story (TinyLlama)\nUpload a picture, pick audience & genre, then generate a short story.")
 
     with gr.Row():
         with gr.Column():
             image = gr.Image(type="pil", label="Upload image")
 
-            audience = gr.SegmentedButton(
+            audience = gr.Radio(
                 ["Children", "Adult"],
                 value="Children",
                 label="Target Audience",
-                elem_classes=["sbtn"],
+                elem_classes=["seg"],
             )
 
-            genre = gr.SegmentedButton(
+            genre = gr.Radio(
                 ["Adventure", "Comedy", "Drama", "Fantasy", "Romance", "Mystery", "Sci-Fi", "Slice of Life"],
                 value="Fantasy",
                 label="Story Genre",
-                elem_classes=["sbtn"],
+                elem_classes=["seg"],
             )
 
             style = gr.Textbox(
@@ -141,7 +138,6 @@ with gr.Blocks(css="""
                 seed = gr.Number(value=42, precision=0, label="Seed")
 
             show_caption = gr.Checkbox(value=True, label="Show the auto-caption")
-
             go = gr.Button("Generate Story", variant="primary")
 
         with gr.Column():
@@ -149,11 +145,10 @@ with gr.Blocks(css="""
             story_out = gr.Textbox(lines=18, label="Generated Story", interactive=False)
 
     go.click(
-        run_pipeline,
+        generate_story,
         inputs=[image, genre, audience, style, temperature, top_p, max_tokens, show_caption, seed],
         outputs=[cap_out, story_out],
     )
 
 if __name__ == "__main__":
     demo.launch()
-
