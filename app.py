@@ -1,5 +1,3 @@
-
-
 import os
 import re
 import tempfile
@@ -15,8 +13,7 @@ from transformers import (
     ViTImageProcessor,
 )
 
-# ------------- MODELS (free + ungated) -------------
-# Image captioner (small, CPU OK)
+
 CAPTION_MODEL_ID = "nlpconnect/vit-gpt2-image-captioning"
 cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_MODEL_ID)
 cap_processor = ViTImageProcessor.from_pretrained(CAPTION_MODEL_ID)
@@ -32,6 +29,7 @@ story_model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
 )
 
+# ------------- HELPERS -------------
 
 def word_count(s: str) -> int:
     return len(re.findall(r"\b\w+\b", s))
@@ -150,14 +148,14 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         gr.Warning("Please upload an image.")
         return "", ""
 
-    gr.Info("Making a caption…")
+    gr.Info("Making a caption (free, local)…")
     image_desc = caption_image_local(image_input)
 
     user_prompt = build_user_prompt(
         image_desc, audience, story_type, min_words, max_words, gen_title
     )
 
-    gr.Info("Writing your story")
+    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
     raw = generate_story_with_qwen(user_prompt, temperature, top_p, max_words)
 
     title, story = parse_title_and_story(raw)
@@ -222,17 +220,15 @@ THEME = gr.themes.Soft(
     primary_hue=gr.themes.colors.teal,
     secondary_hue=gr.themes.colors.indigo,
     neutral_hue=gr.themes.colors.gray,
-    radius_size=gr.themes.sizes.radius_xl,
-    spacing_size=gr.themes.sizes.spacing_md,
 )
 
-with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)") as demo:
+with gr.Blocks(css=CSS, theme=THEME, title="Image to Story") as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown(
             """
             <div style="text-align:center">
-              <h1> Image to Story</h1>
-              <p style="opacity:.9">Upload a Image, Get your Story.</p>
+              <h1>Image to Story</h1>
+              <p style="opacity:.9">Upload an image, pick a genre and get a story.</p>
               <div style="font-size:14px; opacity:.8">Captioner: <code>nlpconnect/vit-gpt2-image-captioning</code> · Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code></div>
             </div>
             """
@@ -258,7 +254,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
                     top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top‑p")
 
                 with gr.Row():
-                    submit_btn = gr.Button('Generate story', variant="primary")
+                    submit_btn = gr.Button(' Generate story', variant="primary")
                     reset_btn = gr.Button('↺ Reset')
 
                 # Example images (optional)
@@ -270,7 +266,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story • Qwen 2.5 (CPU)")
 
             with gr.Column(elem_classes=["glass"]):
                 title_out = gr.Textbox(
-                    label="Title", interactive=False, placeholder="(Title will appear here )", show_copy_button=True
+                    label="Title", interactive=False, placeholder="(Title will appear here)", show_copy_button=True
                 )
                 story_out = gr.Textbox(
                     label="Story", elem_id="story", lines=20, show_copy_button=True
