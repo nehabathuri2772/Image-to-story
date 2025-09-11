@@ -304,8 +304,8 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
 
                 with gr.Column(elem_classes=["card"]):
                     gen_title = gr.Checkbox(value=True, label="Generate Title")
-                    temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
-                    top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top-p")
+                    temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Imagination Level")
+                    top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Vocabulary breadth")
 
                 with gr.Row():
                     submit_btn = gr.Button("Generate Story", variant="primary", elem_classes=["fullw"])
