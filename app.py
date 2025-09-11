@@ -59,9 +59,9 @@ CLIP_LABELS = [
     "shoes","bags","hats",
 ]
 
-# ---------------- Helpers ----------------
 def word_count(s: str) -> int:
     return len(re.findall(r"\b\w+\b", s))
+# trimming the story to not exceed max words
 
 def smart_trim_to_max_words(text: str, max_words: int) -> str:
     tokens = re.findall(r"\S+", text)
@@ -79,7 +79,7 @@ def parse_title_and_story(text: str):
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return "", t
-
+#generating caption with blip
 def caption_blip(path: str) -> str:
     img = Image.open(path).convert("RGB")
     inputs = blip_proc(images=img, return_tensors="pt")
@@ -133,7 +133,7 @@ def build_user_prompt(
             "Then a blank line, then the story.\n"
         )
     else:
-        title_part = "Do NOT include any title line. Start directly with the story.\n"
+        title_part = "Not generating the title. Starting directly with the story.\n"
 
     grounding = ""
     if force_words:
@@ -173,7 +173,7 @@ def generate_story(user_text: str, temperature: float, top_p: float, max_words: 
     input_len = inputs["input_ids"].shape[1]
 
     # Token headroom for full endings
-    approx_tokens = int(max_words * 1.7)            # ~1.5–1.8 tokens per word
+    approx_tokens = int(max_words * 1.7)            
     max_new_tokens = max(180, min(1600, approx_tokens + 80))
 
     with torch.no_grad():
@@ -191,7 +191,7 @@ def generate_story(user_text: str, temperature: float, top_p: float, max_words: 
     gen_ids = outputs[0][input_len:]
     return story_tok.decode(gen_ids, skip_special_tokens=True).strip()
 
-# ---------------- Core callback ----------------
+# takes all the input and generates a caption and based on the caption it writes the story
 def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
     min_words = int(min_words); max_words = int(max_words)
     if min_words < 200: min_words = 200
@@ -203,7 +203,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         gr.Warning("Please upload an image.")
         return "", ""
 
-    gr.Info("Making a caption (BLIP)…")
+    gr.Info("Making a caption")
     image_desc = auto_caption(image_input)
 
     try:
@@ -229,10 +229,10 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
     elif wc < min_words:
         gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). Try lowering min or raising temperature.")
     return title, story
-
+#this function is helps in downloading the story
 def download_story(title: str, story: str):
     if not story.strip():
-        gr.Warning("Nothing to download yet — generate a story first.")
+        gr.Warning("Nothing to download yet generate a story first.")
         return None
     safe_title = re.sub(r"[^\w\-\s]", "", title or "Image_to_Story")[:60].strip() or "Image_to_Story"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -244,7 +244,7 @@ def download_story(title: str, story: str):
         f.write(story.strip() + "\n")
     return path
 
-# ---------------- UI (purple cards, title kept) ----------------
+# ---------------- UI (design of the user interface starts here) ----------------
 CSS = (
   "body{background:#f6f7fb}"
   "#col{max-width:1200px;margin:0 auto;padding:12px}"
@@ -268,16 +268,14 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
     with gr.Column(elem_id="col"):
         gr.Markdown(
             "<div style='text-align:center'>"
-            "<h1>Image → Story</h1>"
+            "<h1>Image to Story</h1>"
             "<p class='muted' style='margin-top:-4px'>Upload an image and let AI create a captivating story based on what it sees!</p>"
             "<div class='muted' style='font-size:13px'>"
-            "Captioner: BLIP base (fallback: ViT-GPT2) · "
-            "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
             "</div></div>"
         )
 
         with gr.Row():
-            # -------- Left column (inputs) --------
+            # -------- Left column is all inpur prompting --------
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Upload Image</span>")
                 with gr.Column(elem_classes=["card"]):
@@ -301,10 +299,10 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
                 with gr.Row():
                     with gr.Column(elem_classes=["card"]):
                         min_words = gr.Number(value=400, label="Minimum Words", precision=0)
-                        gr.Markdown("<div class='muted'>200 – 1000</div>")
+                        gr.Markdown("<div class='muted'>200</div>")
                     with gr.Column(elem_classes=["card"]):
-                        max_words = gr.Number(value=700, label="Maximum Words", precision=0)
-                        gr.Markdown("<div class='muted'>200 – 1000</div>")
+                        max_words = gr.Number(value=800, label="Maximum Words", precision=0)
+                        gr.Markdown("<div class='muted'> 1000</div>")
 
                 with gr.Column(elem_classes=["card"]):
                     gen_title = gr.Checkbox(value=True, label="Generate Title")
@@ -325,7 +323,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
                     "</ul></div>"
                 )
 
-            # -------- Right column (outputs) --------
+            # -------- Right column is outputs where you get the story--------
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Generated Story</span>")
                 with gr.Column(elem_classes=["card"]):
@@ -342,9 +340,9 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
                         show_copy_button=True,
                     )
                 with gr.Column(elem_classes=["card"]):
-                    download_btn = gr.DownloadButton("📥 Download .txt")
+                    download_btn = gr.DownloadButton("Download story")
 
-        # wiring
+        
         submit_btn.click(
             fn=infer,
             inputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
