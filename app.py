@@ -1,4 +1,6 @@
-# Image -> Story (CPU). No triple-quoted strings to avoid unterminated-string errors.
+# This is a image to story
+# given a image the application tells you a story based on it.
+# we have title generation, story generation and download story option for this.
 import os, re, tempfile
 from datetime import datetime
 
@@ -15,11 +17,12 @@ from transformers import (
     CLIPModel,
 )
 
-# -------- Models --------
+# -------- Model for story title genration--------
 CAPTION_MODEL_ID = "nlpconnect/vit-gpt2-image-captioning"
 cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_MODEL_ID)
 cap_processor = ViTImageProcessor.from_pretrained(CAPTION_MODEL_ID)
 cap_tokenizer = AutoTokenizer.from_pretrained(CAPTION_MODEL_ID)
+# --------------- Model for story generation
 
 STORY_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
 story_tokenizer = AutoTokenizer.from_pretrained(STORY_MODEL_ID, use_fast=True)
@@ -34,7 +37,7 @@ CLIP_MODEL_ID = "openai/clip-vit-base-patch32"
 clip_model = CLIPModel.from_pretrained(CLIP_MODEL_ID)
 clip_processor = CLIPProcessor.from_pretrained(CLIP_MODEL_ID)
 
-# -------- Helpers --------
+# -------- We are trying to keep the word count between 200 and 1000 as choosen by the user
 def word_count(s: str) -> int:
     return len(re.findall(r"\b\w+\b", s))
 
@@ -171,7 +174,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         gr.Warning("Please upload an image.")
         return "", ""
 
-    gr.Info("Making a caption (local)…")
+    gr.Info("Making a title")
     image_desc = caption_image_local(image_input)
     keywords = extract_keywords(image_desc)
 
@@ -179,7 +182,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         image_desc, audience, story_type, min_words, max_words, gen_title, keywords
     )
 
-    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    gr.Info("Writing your story")
     candidates = []
     for t in [temperature, min(temperature + 0.1, 1.3), max(temperature - 0.1, 0.3)]:
         raw = generate_story_with_qwen(user_prompt, t, top_p, max_words)
@@ -195,7 +198,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
     if wc > max_words:
         story = smart_trim_to_max_words(story, max_words)
         wc = word_count(story)
-        gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
+        gr.Info(f"Trimmed to {wc} words to respect the {max_words} word limit.")
     elif wc < min_words:
         gr.Warning(
             f"Generated {wc} words (target {min_words}-{max_words}). Try lowering min or raising temperature."
@@ -204,7 +207,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
 
 def download_story(title: str, story: str):
     if not story.strip():
-        gr.Warning("Nothing to download yet — generate a story first.")
+        gr.Warning("Nothing to download yet, so please wait for story to generate first.")
         return None
     safe_title = re.sub(r"[^\w\-\s]", "", title or "Image_to_Story")[:60].strip() or "Image_to_Story"
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -219,7 +222,7 @@ def download_story(title: str, story: str):
 def reset_all():
     return None, "Children", "Adventure", 400, 700, True, 0.9, 0.95, "", ""
 
-# -------- UI (no triple quotes) --------
+# -------- UI  --------
 CSS = (
   ":root{--bg1:#f7fbff;--bg2:#fff8fb;--card:rgba(255,255,255,.65);"
   "--stroke:rgba(120,120,180,.14);--shadow:0 8px 30px rgba(56,43,128,.08)}"
@@ -239,12 +242,12 @@ THEME = gr.themes.Soft(
     neutral_hue=gr.themes.colors.gray,
 )
 
-with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") as demo:
+with gr.Blocks(css=CSS, theme=THEME, title="Image to Story") as demo:
     with gr.Column(elem_id="col-container"):
         gr.Markdown(
             "<div style='text-align:center'>"
-            "<h1>Image → Story</h1>"
-            "<p style='opacity:.9'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
+            "<h1>Image to Story</h1>"
+            "<p style='opacity:.9'>Upload an image, pick a genre, get your own story.</p>"
             "<div style='font-size:14px;opacity:.8'>"
             "Captioner: <code>nlpconnect/vit-gpt2-image-captioning</code> · "
             "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
@@ -252,7 +255,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") 
         )
         with gr.Row():
             with gr.Column(elem_classes=["glass"]):
-                image_in = gr.Image(label="Drop image here", type="filepath", height=320)
+                image_in = gr.Image(label="Drop your image here", type="filepath", height=320)
                 audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
                 story_type = gr.Dropdown(
                     label="Story Type",
@@ -260,19 +263,19 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") 
                     value="Adventure",
                 )
                 with gr.Row():
-                    min_words = gr.Slider(200, 1000, value=400, step=50, label="Min words (200–1000)")
-                    max_words = gr.Slider(200, 1000, value=700, step=50, label="Max words (200–1000)")
+                    min_words = gr.Slider(200, 1000, value=400, step=50, label="Min words (200)")
+                    max_words = gr.Slider(200, 1000, value=700, step=50, label="Max words (1000)")
                 gen_title = gr.Checkbox(value=True, label="Generate Title")
                 with gr.Row():
                     temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
                     top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top-p")
                 with gr.Row():
-                    submit_btn = gr.Button("✨ Tell me a story", variant="primary")
-                    reset_btn  = gr.Button("↺ Reset")
+                    submit_btn = gr.Button("generate story", variant="primary")
+                    reset_btn  = gr.Button("Reset")
             with gr.Column(elem_classes=["glass"]):
                 title_out = gr.Textbox(label="Title", interactive=False, placeholder="(Title appears here)", show_copy_button=True)
                 story_out = gr.Textbox(label="Story", elem_id="story", lines=20, show_copy_button=True)
-                download_btn = gr.DownloadButton("📥 Download .txt")
+                download_btn = gr.DownloadButton(" Download your story")
 
         submit_btn.click(
             fn=infer,
