@@ -172,8 +172,8 @@ def generate_story(user_text: str, temperature: float, top_p: float, max_words: 
     prompt_text = qwen_chat_prompt(user_text)
     inputs = story_tok(prompt_text, return_tensors="pt")
     input_len = inputs["input_ids"].shape[1]
-    max_new_tokens = max(120, min(500, int(max_words * 1.2)))  # CPU-friendly
-    with torch.no_grad():
+    approx_tokens = int(max_words * 1.7)   
+    max_new_tokens = max(180, min(1600, approx_tokens + 80))  
         outputs = story_model.generate(
             **inputs,
             do_sample=True,
