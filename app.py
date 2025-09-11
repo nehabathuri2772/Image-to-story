@@ -1,231 +1,354 @@
+# Image -> Story (CPU-only). Purple card UI + BLIP captioning + CLIP grounding.
+# No triple-quoted strings anywhere (avoids unterminated-string errors).
+
+import os, re, tempfile
+from datetime import datetime
+
 import gradio as gr
-import torch
-from transformers import BlipProcessor, BlipForConditionalGeneration, GPT2LMHeadModel, GPT2Tokenizer
+import numpy as np
 from PIL import Image
-import re
+import torch
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    VisionEncoderDecoderModel,
+    ViTImageProcessor,
+    BlipProcessor,
+    BlipForConditionalGeneration,
+    CLIPProcessor,
+    CLIPModel,
+)
 
-# Initialize models (CPU-compatible, free models)
-print("Loading models...")
+# -------- CPU stability / speed hints --------
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+try:
+    torch.set_num_threads(2)
+except Exception:
+    pass
 
-# Image captioning model - BLIP
-caption_processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
-caption_model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
+# ---------------- Models ----------------
+# Fallback captioner (kept just in case BLIP fails)
+_VIT_CAP_ID = "nlpconnect/vit-gpt2-image-captioning"
+vit_cap_model = VisionEncoderDecoderModel.from_pretrained(_VIT_CAP_ID)
+vit_cap_proc = ViTImageProcessor.from_pretrained(_VIT_CAP_ID)
+vit_cap_tok = AutoTokenizer.from_pretrained(_VIT_CAP_ID)
 
-# Text generation model - GPT-2 (free and works on CPU)
-story_tokenizer = GPT2Tokenizer.from_pretrained("gpt2-medium")
-story_model = GPT2LMHeadModel.from_pretrained("gpt2-medium")
+# Primary captioner (better on CPU)
+BLIP_ID = "Salesforce/blip-image-captioning-base"
+blip_proc = BlipProcessor.from_pretrained(BLIP_ID)
+blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_ID)
 
-# Set pad token
-story_tokenizer.pad_token = story_tokenizer.eos_token
+# Story LLM (small, CPU-friendly)
+STORY_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
+story_model = AutoModelForCausalLM.from_pretrained(
+    STORY_ID,
+    device_map="cpu",
+    dtype=torch.float32,
+    low_cpu_mem_usage=True,
+)
 
-print("Models loaded successfully!")
+# Lightweight CLIP for quick grounding keywords
+CLIP_ID = "openai/clip-vit-base-patch32"
+clip_model = CLIPModel.from_pretrained(CLIP_ID)
+clip_proc = CLIPProcessor.from_pretrained(CLIP_ID)
 
-def generate_image_caption(image):
-    """Generate a caption from the input image"""
-    try:
-        inputs = caption_processor(image, return_tensors="pt")
-        out = caption_model.generate(**inputs, max_new_tokens=50, num_beams=5)
-        caption = caption_processor.decode(out[0], skip_special_tokens=True)
-        return caption
-    except Exception as e:
-        return f"Error generating caption: {str(e)}"
+# Label pool for CLIP grounding (generic scene/object words)
+CLIP_LABELS = [
+    "wigs","wig shop","hair","salon","mannequin","mannequin heads","shelf","store",
+    "glasses","woman","person","face","indoor","counter","books","classroom",
+    "shoes","bags","hats",
+]
 
-def create_story_prompt(caption, genre, target_audience):
-    """Create a story prompt based on caption, genre, and target audience"""
-    
-    genre_styles = {
-        "Fantasy": "In a magical realm where anything is possible",
-        "Mystery": "Something strange and mysterious was happening",
-        "Adventure": "An exciting journey was about to begin",
-        "Romance": "Love was in the air as",
-        "Horror": "In the darkness, something sinister lurked",
-        "Comedy": "In a hilarious turn of events",
-        "Drama": "Life took an unexpected turn when",
-        "Sci-Fi": "In a world of advanced technology and space exploration"
-    }
-    
-    audience_styles = {
-        "Children": "Once upon a time, ",
-        "Young Adult": "It was a day like any other until ",
-        "Adult": "The scene before them revealed ",
-        "Family": "Everyone gathered around as "
-    }
-    
-    genre_start = genre_styles.get(genre, "")
-    audience_start = audience_styles.get(target_audience, "")
-    
-    prompt = f"{audience_start}{genre_start.lower()} {caption}. "
-    return prompt
+# ---------------- Helpers ----------------
+def word_count(s: str) -> int:
+    return len(re.findall(r"\b\w+\b", s))
 
-def generate_story(image, genre, target_audience, min_words, max_words):
-    """Main function to generate story from image"""
-    
-    if image is None:
-        return "Please upload an image to generate a story."
-    
-    # Validate word count inputs
-    if min_words <= 0 or max_words <= 0:
-        return "Please enter valid word counts (greater than 0)."
-    
-    if min_words > max_words:
-        return "Minimum words cannot be greater than maximum words."
-    
-    try:
-        # Step 1: Generate image caption
-        caption = generate_image_caption(image)
-        if caption.startswith("Error"):
-            return caption
-        
-        # Step 2: Create story prompt
-        story_prompt = create_story_prompt(caption, genre, target_audience)
-        
-        # Step 3: Generate story
-        inputs = story_tokenizer.encode(story_prompt, return_tensors="pt")
-        
-        # Calculate approximate token count (rough estimate: 1 word ≈ 1.3 tokens)
-        min_tokens = int(min_words * 1.3)
-        max_tokens = int(max_words * 1.3)
-        
-        # Generate story with appropriate parameters
-        with torch.no_grad():
-            outputs = story_model.generate(
-                inputs,
-                max_new_tokens=max_tokens,
-                min_new_tokens=min_tokens,
-                num_return_sequences=1,
-                temperature=0.8,
-                do_sample=True,
-                pad_token_id=story_tokenizer.eos_token_id,
-                repetition_penalty=1.2,
-                top_p=0.9
-            )
-        
-        # Decode the generated story
-        generated_text = story_tokenizer.decode(outputs[0], skip_special_tokens=True)
-        
-        # Remove the original prompt to get just the generated story
-        story = generated_text[len(story_prompt):].strip()
-        
-        # Clean up the story
-        story = re.sub(r'\n+', '\n\n', story)  # Clean up line breaks
-        story = story.replace(story_tokenizer.eos_token, '')  # Remove end tokens
-        
-        # Ensure the story ends with proper punctuation
-        if story and story[-1] not in '.!?':
-            # Find the last complete sentence
-            sentences = re.split(r'[.!?]+', story)
-            if len(sentences) > 1:
-                story = '.'.join(sentences[:-1]) + '.'
-        
-        # Word count check
-        word_count = len(story.split())
-        
-        final_story = f"**Generated Story** (Word count: {word_count})\n\n{story_prompt}{story}"
-        
-        return final_story
-        
-    except Exception as e:
-        return f"Error generating story: {str(e)}"
+def smart_trim_to_max_words(text: str, max_words: int) -> str:
+    tokens = re.findall(r"\S+", text)
+    if len(tokens) <= max_words:
+        return text.strip()
+    clipped = " ".join(tokens[:max_words]).strip()
+    last_end = max(clipped.rfind("."), clipped.rfind("!"), clipped.rfind("?"))
+    if last_end >= int(max_words * 0.6):
+        clipped = clipped[: last_end + 1]
+    return clipped.strip()
 
-# Create Gradio interface
-def create_interface():
-    with gr.Blocks(title="Image to Story Generator", theme=gr.themes.Soft()) as app:
-        
-        gr.HTML("""
-        <div style="text-align: center; padding: 20px;">
-            <h1>🎭 Image to Story Generator</h1>
-            <p>Upload an image and let AI create a captivating story based on what it sees!</p>
-        </div>
-        """)
-        
-        with gr.Row():
-            with gr.Column(scale=1):
-                # Input components
-                image_input = gr.Image(
-                    type="pil",
-                    label="Upload Image",
-                    height=300
-                )
-                
-                with gr.Row():
-                    genre_input = gr.Dropdown(
-                        choices=["Fantasy", "Mystery", "Adventure", "Romance", "Horror", "Comedy", "Drama", "Sci-Fi"],
-                        label="Genre",
-                        value="Adventure"
-                    )
-                    
-                    audience_input = gr.Dropdown(
-                        choices=["Children", "Young Adult", "Adult", "Family"],
-                        label="Target Audience",
-                        value="Family"
-                    )
-                
-                with gr.Row():
-                    min_words_input = gr.Number(
-                        label="Minimum Words",
-                        value=50,
-                        minimum=10,
-                        maximum=500
-                    )
-                    
-                    max_words_input = gr.Number(
-                        label="Maximum Words",
-                        value=200,
-                        minimum=20,
-                        maximum=1000
-                    )
-                
-                generate_btn = gr.Button("Generate Story", variant="primary", size="lg")
-                
-                gr.HTML("""
-                <div style="margin-top: 20px; padding: 10px; background-color: #f0f8ff; border-radius: 10px;">
-                    <h4> Tips for better stories:</h4>
-                    <ul>
-                        <li>Use clear, high-quality images</li>
-                        <li>Images with people, objects, or scenes work best</li>
-                        <li>Try different genres for varied storytelling styles</li>
-                        <li>Adjust word count based on your preferred story length</li>
-                    </ul>
-                </div>
-                """)
-            
-            with gr.Column(scale=1):
-                # Output component
-                story_output = gr.Textbox(
-                    label="Generated Story",
-                    lines=20,
-                    max_lines=30,
-                    placeholder="Your generated story will appear here...",
-                    show_copy_button=True
-                )
-        
-        # Event handler
-        generate_btn.click(
-            fn=generate_story,
-            inputs=[image_input, genre_input, audience_input, min_words_input, max_words_input],
-            outputs=story_output,
-            show_progress=True
+def parse_title_and_story(text: str):
+    t = text.replace("\r\n", "\n").strip()
+    m = re.match(r'^\s*Title:\s*(.+?)\n\n(.*)$', t, flags=re.DOTALL)
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return "", t
+
+def caption_blip(path: str) -> str:
+    img = Image.open(path).convert("RGB")
+    inputs = blip_proc(images=img, return_tensors="pt")
+    with torch.no_grad():
+        out = blip_model.generate(**inputs, max_new_tokens=32)
+    text = blip_proc.tokenizer.decode(out[0], skip_special_tokens=True)
+    return text.strip()
+
+def caption_vit(path: str) -> str:
+    img = Image.open(path).convert("RGB")
+    pixels = vit_cap_proc(images=img, return_tensors="pt").pixel_values
+    with torch.no_grad():
+        ids = vit_cap_model.generate(
+            pixels,
+            max_length=24,
+            num_beams=2,
+            no_repeat_ngram_size=2,
         )
-        
-        gr.HTML("""
-        <div style="text-align: center; margin-top: 30px; padding: 20px; background-color: #f9f9f9; border-radius: 10px;">
-            <h3>How it works:</h3>
-            <p><strong>1.</strong> AI analyzes your image and generates a descriptive caption</p>
-            <p><strong>2.</strong> The caption is combined with your chosen genre and audience preferences</p>
-            <p><strong>3.</strong> A creative story is generated within your specified word count</p>
-            <br>
-            <p><em>Note: This app uses free, CPU-based models for accessibility. Generation may take 30-60 seconds.</em></p>
-        </div>
-        """)
-    
-    return app
+    return vit_cap_tok.decode(ids[0], skip_special_tokens=True).strip()
 
-# Launch the app
-if __name__ == "__main__":
-    app = create_interface()
-    app.launch(
-        share=True,
-        debug=True,
-        server_name="0.0.0.0",
-        server_port=7860
+def auto_caption(path: str) -> str:
+    try:
+        txt = caption_blip(path)
+        if len(txt.split()) < 2:
+            return caption_vit(path)
+        return txt
+    except Exception:
+        return caption_vit(path)
+
+def clip_top_labels(path: str, k: int = 4):
+    img = Image.open(path).convert("RGB")
+    inputs = clip_proc(text=CLIP_LABELS, images=img, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        out = clip_model(**inputs)
+        logits = out.logits_per_image[0]
+        vals, idx = torch.topk(logits, k=min(k, len(CLIP_LABELS)))
+    return [CLIP_LABELS[i] for i in idx.tolist()]
+
+def build_user_prompt(
+    image_desc: str,
+    audience: str,
+    story_type: str,
+    min_words: int,
+    max_words: int,
+    gen_title: bool,
+    force_words=None,
+) -> str:
+    if gen_title:
+        title_part = (
+            "Start with one line exactly like: Title: <concise, original title>\n"
+            "Then a blank line, then the story.\n"
+        )
+    else:
+        title_part = "Do NOT include any title line. Start directly with the story.\n"
+
+    grounding = ""
+    if force_words:
+        fw = ", ".join(force_words)
+        grounding = (
+            "\nIn the FIRST paragraph, explicitly include at least 2 of these words: "
+            + fw + ". Do not invent unrelated objects."
+        )
+
+    prompt = (
+        f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience "
+        f"based ONLY on this image description:\n"
+        f"{image_desc}\n\n"
+        "Constraints:\n"
+        f"- Length: between {min_words} and {max_words} words.\n"
+        f"- Tone/genre: {story_type}.\n"
+        "- No meta commentary or warnings.\n"
+        "- Keep it self-contained and vivid."
+        f"{grounding}\n\n"
+        "Formatting:\n"
+        f"{title_part}"
+        "If you include a title, put nothing else on the title line except the title itself.\n"
     )
+    return prompt.strip()
+
+def qwen_chat_prompt(user_text: str) -> str:
+    msgs = [
+        {"role": "system", "content": "You are a helpful, creative storyteller."},
+        {"role": "user", "content": user_text},
+    ]
+    return story_tok.apply_chat_template(
+        msgs, tokenize=False, add_generation_prompt=True
+    )
+
+def generate_story(user_text: str, temperature: float, top_p: float, max_words: int) -> str:
+    prompt_text = qwen_chat_prompt(user_text)
+    inputs = story_tok(prompt_text, return_tensors="pt")
+    input_len = inputs["input_ids"].shape[1]
+    max_new_tokens = max(120, min(500, int(max_words * 1.2)))  # CPU-friendly
+    with torch.no_grad():
+        outputs = story_model.generate(
+            **inputs,
+            do_sample=True,
+            temperature=float(temperature),
+            top_p=float(top_p),
+            repetition_penalty=1.05,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=story_tok.eos_token_id,
+            pad_token_id=story_tok.eos_token_id,
+        )
+    gen_ids = outputs[0][input_len:]
+    return story_tok.decode(gen_ids, skip_special_tokens=True).strip()
+
+# ---------------- Core callback ----------------
+def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
+    min_words = int(min_words); max_words = int(max_words)
+    if min_words < 200: min_words = 200
+    if max_words > 1000: max_words = 1000
+    if min_words > max_words:
+        min_words, max_words = max_words, min_words
+        gr.Warning("Swapped min/max to keep a valid range (200–1000).")
+    if image_input is None:
+        gr.Warning("Please upload an image.")
+        return "", ""
+
+    gr.Info("Making a caption (BLIP)…")
+    image_desc = auto_caption(image_input)
+
+    try:
+        force_words = clip_top_labels(image_input, k=4)
+    except Exception:
+        force_words = None
+
+    user_prompt = build_user_prompt(
+        image_desc, audience, story_type, min_words, max_words, gen_title, force_words
+    )
+
+    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    raw = generate_story(user_prompt, temperature, top_p, max_words)
+
+    title, story = parse_title_and_story(raw)
+    story = "\n\n".join(p for p in story.split("\n") if p.strip())
+
+    wc = word_count(story)
+    if wc > max_words:
+        story = smart_trim_to_max_words(story, max_words)
+        wc = word_count(story)
+        gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
+    elif wc < min_words:
+        gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). Try lowering min or raising temperature.")
+    return title, story
+
+def download_story(title: str, story: str):
+    if not story.strip():
+        gr.Warning("Nothing to download yet — generate a story first.")
+        return None
+    safe_title = re.sub(r"[^\w\-\s]", "", title or "Image_to_Story")[:60].strip() or "Image_to_Story"
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{safe_title}_{ts}.txt"
+    path = os.path.join(tempfile.gettempdir(), filename)
+    with open(path, "w", encoding="utf-8") as f:
+        if title.strip():
+            f.write(title.strip() + "\n\n")
+        f.write(story.strip() + "\n")
+    return path
+
+# ---------------- UI (purple cards, title kept) ----------------
+CSS = (
+  "body{background:#f6f7fb}"
+  "#col{max-width:1200px;margin:0 auto;padding:12px}"
+  ".chip{display:inline-block;padding:8px 12px;border-radius:12px;"
+  "background:#ede9fe;color:#4c1d95;font-weight:600;font-size:14px}"
+  ".card{background:#fff;border:1px solid #e5e7eb;border-radius:16px;"
+  "padding:16px;box-shadow:0 2px 10px rgba(0,0,0,.03)}"
+  ".fullw button{width:100%}"
+  "#story textarea{font-size:1.06em;line-height:1.65em}"
+  ".muted{color:#6b7280;font-size:14px;margin-top:4px}"
+  ".tips{background:#f9fafb;border:1px dashed #e5e7eb;border-radius:12px;padding:12px}"
+)
+
+THEME = gr.themes.Soft(
+    primary_hue=gr.themes.colors.violet,
+    secondary_hue=gr.themes.colors.violet,
+    neutral_hue=gr.themes.colors.gray,
+)
+
+with gr.Blocks(css=CSS, theme=THEME, title="Image → Story Generator") as demo:
+    with gr.Column(elem_id="col"):
+        gr.Markdown(
+            "<div style='text-align:center'>"
+            "<h1>Image → Story</h1>"
+            "<p class='muted' style='margin-top:-4px'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
+            "<div class='muted' style='font-size:13px'>"
+            "Captioner: BLIP base (fallback: ViT-GPT2) · "
+            "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
+            "</div></div>"
+        )
+
+        with gr.Row():
+            # -------- Left column (inputs) --------
+            with gr.Column(scale=1):
+                gr.Markdown("<span class='chip'>Upload Image</span>")
+                with gr.Column(elem_classes=["card"]):
+                    image_in = gr.Image(label=None, type="filepath", height=320)
+                    gr.Markdown("<div class='muted'>Supported: JPG/PNG. Clear scenes with people/objects work best.</div>")
+
+                with gr.Row():
+                    with gr.Column(elem_classes=["card"]):
+                        story_type = gr.Dropdown(
+                            label="Genre",
+                            choices=["Adventure", "Comedy", "Drama", "Fantasy", "Romance", "Horror"],
+                            value="Adventure",
+                        )
+                    with gr.Column(elem_classes=["card"]):
+                        audience = gr.Dropdown(
+                            label="Target Audience",
+                            choices=["Children", "Adult"],
+                            value="Children",
+                        )
+
+                with gr.Row():
+                    with gr.Column(elem_classes=["card"]):
+                        min_words = gr.Number(value=400, label="Minimum Words", precision=0)
+                        gr.Markdown("<div class='muted'>200 – 1000</div>")
+                    with gr.Column(elem_classes=["card"]):
+                        max_words = gr.Number(value=700, label="Maximum Words", precision=0)
+                        gr.Markdown("<div class='muted'>200 – 1000</div>")
+
+                with gr.Column(elem_classes=["card"]):
+                    gen_title = gr.Checkbox(value=True, label="Generate Title")
+                    temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
+                    top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top-p")
+
+                with gr.Row():
+                    submit_btn = gr.Button("Generate Story", variant="primary", elem_classes=["fullw"])
+
+                gr.Markdown(
+                    "<div class='tips' style='margin-top:10px'>"
+                    "<strong>Tips for better stories:</strong>"
+                    "<ul style='margin:6px 0 0 18px'>"
+                    "<li>Use clear, high-quality images</li>"
+                    "<li>People, objects, or scenes work best</li>"
+                    "<li>Try different genres for varied styles</li>"
+                    "<li>Adjust word counts to your preferred length</li>"
+                    "</ul></div>"
+                )
+
+            # -------- Right column (outputs) --------
+            with gr.Column(scale=1):
+                gr.Markdown("<span class='chip'>Generated Story</span>")
+                with gr.Column(elem_classes=["card"]):
+                    title_out = gr.Textbox(
+                        label="Title",
+                        interactive=False,
+                        placeholder="(Title appears here)",
+                        show_copy_button=True,
+                    )
+                    story_out = gr.Textbox(
+                        label="Story",
+                        elem_id="story",
+                        lines=22,
+                        show_copy_button=True,
+                    )
+                with gr.Column(elem_classes=["card"]):
+                    download_btn = gr.DownloadButton("📥 Download .txt")
+
+        # wiring
+        submit_btn.click(
+            fn=infer,
+            inputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
+            outputs=[title_out, story_out],
+        )
+        download_btn.click(fn=download_story, inputs=[title_out, story_out], outputs=download_btn)
+
+if __name__ == "__main__":
+    demo.queue().launch(ssr_mode=False)
