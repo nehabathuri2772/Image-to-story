@@ -133,7 +133,7 @@ def create_interface():
         
         gr.HTML("""
         <div style="text-align: center; padding: 20px;">
-            <h1> Image to Story Generator</h1>
+            <h1>🎭 Image to Story Generator</h1>
             <p>Upload an image and let AI create a captivating story based on what it sees!</p>
         </div>
         """)
@@ -179,7 +179,7 @@ def create_interface():
                 
                 gr.HTML("""
                 <div style="margin-top: 20px; padding: 10px; background-color: #f0f8ff; border-radius: 10px;">
-                    <h4>💡 Tips for better stories:</h4>
+                    <h4> Tips for better stories:</h4>
                     <ul>
                         <li>Use clear, high-quality images</li>
                         <li>Images with people, objects, or scenes work best</li>
