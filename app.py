@@ -1,5 +1,3 @@
-# Image -> Story (CPU-only). Purple card UI + BLIP captioning + CLIP grounding.
-# No triple-quoted strings anywhere (avoids unterminated-string errors).
 
 import os, re, tempfile
 from datetime import datetime
@@ -28,7 +26,7 @@ except Exception:
     pass
 
 # ---------------- Models ----------------
-# Fallback captioner (kept just in case BLIP fails)
+# Fallback captioner 
 _VIT_CAP_ID = "nlpconnect/vit-gpt2-image-captioning"
 vit_cap_model = VisionEncoderDecoderModel.from_pretrained(_VIT_CAP_ID)
 vit_cap_proc = ViTImageProcessor.from_pretrained(_VIT_CAP_ID)
@@ -39,7 +37,7 @@ BLIP_ID = "Salesforce/blip-image-captioning-base"
 blip_proc = BlipProcessor.from_pretrained(BLIP_ID)
 blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_ID)
 
-# Story LLM (small, CPU-friendly)
+# Story LLM 
 STORY_ID = "Qwen/Qwen2.5-1.5B-Instruct"
 story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
 story_model = AutoModelForCausalLM.from_pretrained(
@@ -213,7 +211,7 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         image_desc, audience, story_type, min_words, max_words, gen_title, force_words
     )
 
-    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    gr.Info("Writing your story")
     raw = generate_story(user_prompt, temperature, top_p, max_words)
 
     title, story = parse_title_and_story(raw)
@@ -262,12 +260,12 @@ THEME = gr.themes.Soft(
     neutral_hue=gr.themes.colors.gray,
 )
 
-with gr.Blocks(css=CSS, theme=THEME, title="Image → Story Generator") as demo:
+with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
     with gr.Column(elem_id="col"):
         gr.Markdown(
             "<div style='text-align:center'>"
             "<h1>Image → Story</h1>"
-            "<p class='muted' style='margin-top:-4px'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
+            "<p class='muted' style='margin-top:-4px'>Upload an image and let AI create a captivating story based on what it sees!</p>"
             "<div class='muted' style='font-size:13px'>"
             "Captioner: BLIP base (fallback: ViT-GPT2) · "
             "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
