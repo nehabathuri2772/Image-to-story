@@ -249,8 +249,6 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story") as demo:
             "<h1>Image to Story</h1>"
             "<p style='opacity:.9'>Upload an image, pick a genre, get your own story.</p>"
             "<div style='font-size:14px;opacity:.8'>"
-            "Captioner: <code>nlpconnect/vit-gpt2-image-captioning</code> · "
-            "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
             "</div></div>"
         )
         with gr.Row():
