@@ -167,13 +167,16 @@ def qwen_chat_prompt(user_text: str) -> str:
     return story_tok.apply_chat_template(
         msgs, tokenize=False, add_generation_prompt=True
     )
-
 def generate_story(user_text: str, temperature: float, top_p: float, max_words: int) -> str:
     prompt_text = qwen_chat_prompt(user_text)
     inputs = story_tok(prompt_text, return_tensors="pt")
     input_len = inputs["input_ids"].shape[1]
-    approx_tokens = int(max_words * 1.7)   
-    max_new_tokens = max(180, min(1600, approx_tokens + 80))  
+
+    # Token headroom for full endings
+    approx_tokens = int(max_words * 1.7)            # ~1.5–1.8 tokens per word
+    max_new_tokens = max(180, min(1600, approx_tokens + 80))
+
+    with torch.no_grad():
         outputs = story_model.generate(
             **inputs,
             do_sample=True,
@@ -184,6 +187,7 @@ def generate_story(user_text: str, temperature: float, top_p: float, max_words: 
             eos_token_id=story_tok.eos_token_id,
             pad_token_id=story_tok.eos_token_id,
         )
+
     gen_ids = outputs[0][input_len:]
     return story_tok.decode(gen_ids, skip_special_tokens=True).strip()
 
