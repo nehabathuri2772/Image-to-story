@@ -1,3 +1,4 @@
+# Image -> Story (CPU-only). Plain UI + better grounding.
 import os, re, tempfile
 from datetime import datetime
 
@@ -10,6 +11,10 @@ from transformers import (
     AutoModelForCausalLM,
     VisionEncoderDecoderModel,
     ViTImageProcessor,
+    BlipProcessor,
+    BlipForConditionalGeneration,
+    CLIPProcessor,
+    CLIPModel,
 )
 
 # --- make CPU Spaces stabler/faster ---
@@ -21,11 +26,18 @@ except Exception:
     pass
 
 # ---------------- Models ----------------
-CAPTION_MODEL_ID = "nlpconnect/vit-gpt2-image-captioning"
-cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_MODEL_ID)
-cap_processor = ViTImageProcessor.from_pretrained(CAPTION_MODEL_ID)
-cap_tokenizer = AutoTokenizer.from_pretrained(CAPTION_MODEL_ID)
+# Older captioner kept for fallback
+_CAPTION_VIT_ID = "nlpconnect/vit-gpt2-image-captioning"
+cap_model = VisionEncoderDecoderModel.from_pretrained(_CAPTION_VIT_ID)
+cap_processor = ViTImageProcessor.from_pretrained(_CAPTION_VIT_ID)
+cap_tokenizer = AutoTokenizer.from_pretrained(_CAPTION_VIT_ID)
 
+# Better captioner (BLIP) - CPU OK
+BLIP_ID = "Salesforce/blip-image-captioning-base"
+blip_processor = BlipProcessor.from_pretrained(BLIP_ID)
+blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_ID)
+
+# Story LLM (CPU friendly)
 STORY_MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
 story_tokenizer = AutoTokenizer.from_pretrained(STORY_MODEL_ID, use_fast=True)
 story_model = AutoModelForCausalLM.from_pretrained(
@@ -34,6 +46,18 @@ story_model = AutoModelForCausalLM.from_pretrained(
     dtype=torch.float32,
     low_cpu_mem_usage=True,
 )
+
+# Lightweight CLIP for grounding keywords (very fast vs LLM)
+CLIP_ID = "openai/clip-vit-base-patch32"
+clip_model = CLIPModel.from_pretrained(CLIP_ID)
+clip_processor = CLIPProcessor.from_pretrained(CLIP_ID)
+
+# Label pool for CLIP grounding (generic scene/object words)
+CLIP_LABELS = [
+    "wigs","wig shop","hair","salon","mannequin","mannequin heads","shelf","store",
+    "glasses","woman","person","face","indoor","counter","books","classroom",
+    "shoes","bags","hats",
+]
 
 # --------------- Helpers ---------------
 def word_count(s: str) -> int:
@@ -56,17 +80,45 @@ def parse_title_and_story(text: str):
         return m.group(1).strip(), m.group(2).strip()
     return "", t
 
-def caption_image_local(image_path: str) -> str:
+def caption_blip(image_path: str) -> str:
+    img = Image.open(image_path).convert("RGB")
+    inputs = blip_processor(images=img, return_tensors="pt")
+    with torch.no_grad():
+        out = blip_model.generate(**inputs, max_new_tokens=32)
+    text = blip_processor.tokenizer.decode(out[0], skip_special_tokens=True)
+    return text.strip()
+
+def caption_vit(image_path: str) -> str:
     img = Image.open(image_path).convert("RGB")
     pixel_values = cap_processor(images=img, return_tensors="pt").pixel_values
-    output_ids = cap_model.generate(
-        pixel_values,
-        max_length=24,
-        num_beams=2,             # lighter than 4
-        no_repeat_ngram_size=2,
-    )
+    with torch.no_grad():
+        output_ids = cap_model.generate(
+            pixel_values,
+            max_length=24,
+            num_beams=2,
+            no_repeat_ngram_size=2,
+        )
     caption = cap_tokenizer.decode(output_ids[0], skip_special_tokens=True)
     return caption.strip()
+
+def auto_caption(image_path: str) -> str:
+    try:
+        text = caption_blip(image_path)
+        # sanity: if BLIP returns an ultra-short or empty caption, fallback
+        if len(text.split()) < 2:
+            return caption_vit(image_path)
+        return text
+    except Exception:
+        return caption_vit(image_path)
+
+def clip_top_labels(image_path: str, k: int = 4):
+    img = Image.open(image_path).convert("RGB")
+    inputs = clip_processor(text=CLIP_LABELS, images=img, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        out = clip_model(**inputs)
+        logits = out.logits_per_image[0]  # (num_labels,)
+        vals, idx = torch.topk(logits, k=min(k, len(CLIP_LABELS)))
+    return [CLIP_LABELS[i] for i in idx.tolist()]
 
 def build_user_prompt(
     image_desc: str,
@@ -75,6 +127,7 @@ def build_user_prompt(
     min_words: int,
     max_words: int,
     gen_title: bool,
+    force_words=None,
 ) -> str:
     if gen_title:
         title_part = (
@@ -84,6 +137,14 @@ def build_user_prompt(
     else:
         title_part = "Do NOT include any title line. Start directly with the story.\n"
 
+    grounding = ""
+    if force_words:
+        fw = ", ".join(force_words)
+        grounding = (
+            "\nIn the FIRST paragraph, explicitly include at least 2 of these words: "
+            + fw + ". Do not invent unrelated objects."
+        )
+
     prompt = (
         f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience "
         f"based ONLY on this image description:\n"
@@ -92,7 +153,8 @@ def build_user_prompt(
         f"- Length: between {min_words} and {max_words} words.\n"
         f"- Tone/genre: {story_type}.\n"
         "- No meta commentary or warnings.\n"
-        "- Keep it self-contained and vivid.\n\n"
+        "- Keep it self-contained and vivid."
+        f"{grounding}\n\n"
         "Formatting:\n"
         f"{title_part}"
         "If you include a title, put nothing else on the title line except the title itself.\n"
@@ -112,8 +174,7 @@ def generate_story_with_qwen(user_text: str, temperature: float, top_p: float, m
     prompt_text = qwen_chat_prompt(user_text)
     inputs = story_tokenizer(prompt_text, return_tensors="pt")
     input_len = inputs["input_ids"].shape[1]
-    # keep CPU-friendly
-    max_new_tokens = max(120, min(500, int(max_words * 1.2)))
+    max_new_tokens = max(120, min(500, int(max_words * 1.2)))  # CPU friendly
     with torch.no_grad():
         outputs = story_model.generate(
             **inputs,
@@ -130,7 +191,7 @@ def generate_story_with_qwen(user_text: str, temperature: float, top_p: float, m
     return text
 
 # --------------- Core callback ---------------
-def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
+def infer(image_input, manual_desc, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
     min_words = int(min_words); max_words = int(max_words)
     if min_words < 200: min_words = 200
     if max_words > 1000: max_words = 1000
@@ -141,13 +202,24 @@ def infer(image_input, audience, story_type, min_words, max_words, gen_title, te
         gr.Warning("Please upload an image.")
         return "", ""
 
-    gr.Info("Making a caption (local)…")
-    image_desc = caption_image_local(image_input)
+    if manual_desc and manual_desc.strip():
+        image_desc = manual_desc.strip()
+    else:
+        gr.Info("Making a caption (BLIP)…")
+        image_desc = auto_caption(image_input)
+
+    # CLIP grounding words (fast) to avoid random objects
+    try:
+        force_words = clip_top_labels(image_input, k=4)
+    except Exception:
+        force_words = None
+
+    user_prompt = build_user_prompt(
+        image_desc, audience, story_type, min_words, max_words, gen_title, force_words
+    )
 
     gr.Info("Writing your story with Qwen 2.5 (CPU)…")
-    raw = generate_story_with_qwen(build_user_prompt(
-        image_desc, audience, story_type, min_words, max_words, gen_title
-    ), temperature, top_p, max_words)
+    raw = generate_story_with_qwen(user_prompt, temperature, top_p, max_words)
 
     title, story = parse_title_and_story(raw)
     story = "\n\n".join(p for p in story.split("\n") if p.strip())
@@ -176,7 +248,7 @@ def download_story(title: str, story: str):
     return path
 
 def reset_all():
-    return None, "Children", "Adventure", 400, 700, True, 0.9, 0.95, "", ""
+    return None, "", "Children", "Adventure", 400, 700, True, 0.9, 0.95, "", ""
 
 # ---------------- UI (plain & neutral) ----------------
 CSS = (
@@ -208,7 +280,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") 
             "<h1>Image → Story</h1>"
             "<p style='opacity:.9'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
             "<div style='font-size:14px;opacity:.8'>"
-            "Captioner: <code>nlpconnect/vit-gpt2-image-captioning</code> · "
+            "Captioner: BLIP base (fallback: ViT-GPT2) · "
             "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
             "</div></div>"
         )
@@ -216,6 +288,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") 
         with gr.Row():
             with gr.Column(elem_classes=["glass"]):
                 image_in = gr.Image(label="Drop image here", type="filepath", height=320)
+                manual_desc = gr.Textbox(label="(Optional) Describe the image to override the caption", placeholder="e.g., A woman in a wig shop with mannequin heads on shelves")
                 audience = gr.Radio(label="Target Audience", choices=["Children", "Adult"], value="Children")
                 story_type = gr.Dropdown(
                     label="Story Type",
@@ -240,16 +313,15 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image -> Story • Qwen 2.5 (CPU)") 
 
         submit_btn.click(
             fn=infer,
-            inputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
+            inputs=[image_in, manual_desc, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
             outputs=[title_out, story_out],
         )
         download_btn.click(fn=download_story, inputs=[title_out, story_out], outputs=download_btn)
         reset_btn.click(
             fn=reset_all,
             inputs=None,
-            outputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p, title_out, story_out],
+            outputs=[image_in, manual_desc, audience, story_type, min_words, max_words, gen_title, temperature, top_p, title_out, story_out],
         )
 
 if __name__ == "__main__":
     demo.queue().launch(ssr_mode=False)
-
