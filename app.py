@@ -17,7 +17,7 @@ from transformers import (
     CLIPModel,
 )
 
-# -------- CPU stability / speed hints --------
+
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 os.environ.setdefault("MKL_NUM_THREADS", "1")
 try:
@@ -26,13 +26,13 @@ except Exception:
     pass
 
 # ---------------- Models ----------------
-# Fallback captioner 
+
 _VIT_CAP_ID = "nlpconnect/vit-gpt2-image-captioning"
 vit_cap_model = VisionEncoderDecoderModel.from_pretrained(_VIT_CAP_ID)
 vit_cap_proc = ViTImageProcessor.from_pretrained(_VIT_CAP_ID)
 vit_cap_tok = AutoTokenizer.from_pretrained(_VIT_CAP_ID)
 
-# Primary captioner (better on CPU)
+# Primary captioner 
 BLIP_ID = "Salesforce/blip-image-captioning-base"
 blip_proc = BlipProcessor.from_pretrained(BLIP_ID)
 blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_ID)
@@ -47,7 +47,7 @@ story_model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
 )
 
-# Lightweight CLIP for quick grounding keywords
+# Lightweight CLIP for getting the relevant story
 CLIP_ID = "openai/clip-vit-base-patch32"
 clip_model = CLIPModel.from_pretrained(CLIP_ID)
 clip_proc = CLIPProcessor.from_pretrained(CLIP_ID)
@@ -108,6 +108,40 @@ def auto_caption(path: str) -> str:
         return txt
     except Exception:
         return caption_vit(path)
+
+def extract_keywords(text: str, k: int = 12):
+    stop = {
+        "a","an","the","and","or","of","to","in","on","at","for","by","from",
+        "with","without","is","are","was","were","be","been","it","its",
+        "this","that","these","those","his","her","their","your","my","our",
+        "into","over","under","near","very","more","most","such","as"
+    }
+    words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]*", text)]
+    keep = []
+    for w in words:
+        if w not in stop and len(w) > 2 and w not in keep:
+            keep.append(w)
+        if len(keep) >= k:
+            break
+    return keep
+
+GENERAL_FALLBACK = [
+    "person","people","man","woman","child","group","selfie",
+    "indoor","outdoor","nature","city","shop","market","street","room",
+    "animal","dog","cat","bird","horse","fish",
+    "tree","flower","plant","sky","water","ocean","beach","mountain","river",
+    "building","bridge","car","bike","bus","train",
+    "food","drink","fruit","vegetable","dessert",
+    "book","computer","phone","tv","table","chair","window","door","sign",
+    "art","statue","painting","sculpture"
+]
+
+def dynamic_label_pool(caption: str, cap_limit: int = 24) -> list:
+    kws = extract_keywords(caption, k=cap_limit)
+    pool = kws + [w for w in GENERAL_FALLBACK if w not in kws]
+    return pool[:40]
+
+
 
 def clip_top_labels(path: str, k: int = 4):
     img = Image.open(path).convert("RGB")
@@ -351,4 +385,4 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story Generator") as demo:
         download_btn.click(fn=download_story, inputs=[title_out, story_out], outputs=download_btn)
 
 if __name__ == "__main__":
-    demo.queue().launch(ssr_mode=False)
+    demo.queue().launch(ssr_mode=True)
