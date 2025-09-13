@@ -1,108 +1,62 @@
-import requests
-import os
-print("[net] hf api status:",
-      requests.get("https://api-inference.huggingface.co/status/health",
-                   headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN','')}"}
-      ).status_code)
-print("[net] models GET:",
-      requests.get("https://api-inference.huggingface.co/models/distilbert-base-uncased").status_code)
+# Image -> Story (CPU-only). Purple card UI + BLIP captioning + dynamic CLIP grounding.
+# No triple-quoted strings (avoids unterminated-string errors).
 
-import os, re, io, tempfile
+import os, re, tempfile
 from datetime import datetime
 
 import gradio as gr
+import numpy as np
 from PIL import Image
-from huggingface_hub import InferenceClient
-import requests
+import torch
+from transformers import (
+    AutoTokenizer,
+    AutoModelForCausalLM,
+    VisionEncoderDecoderModel,
+    ViTImageProcessor,
+    BlipProcessor,
+    BlipForConditionalGeneration,
+    CLIPProcessor,
+    CLIPModel,
+)
 
-# ====== Env & config (sanitize) ===============================================
-# ==== Caption config (sanitize + candidates + pipeline fallback) ====
-_raw = (os.getenv("HF_TOKEN") or "").strip().strip('"').strip("'")
-HF_TOKEN = _raw if _raw.startswith("hf_") else None
+# -------- CPU stability / speed hints --------
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+os.environ.setdefault("MKL_NUM_THREADS", "1")
+try:
+    torch.set_num_threads(2)
+except Exception:
+    pass
 
-PRIMARY_CAPTION = (os.getenv("CAPTION_MODEL") or "nlpconnect/vit-gpt2-image-captioning").strip()
-LLM_MODEL       = (os.getenv("LLM_MODEL") or "Qwen/Qwen2.5-3B-Instruct").strip()
+# ---------------- Models ----------------
+# Fallback captioner (kept in case BLIP fails)
+_VIT_CAP_ID = "nlpconnect/vit-gpt2-image-captioning"
+vit_cap_model = VisionEncoderDecoderModel.from_pretrained(_VIT_CAP_ID)
+vit_cap_proc = ViTImageProcessor.from_pretrained(_VIT_CAP_ID)
+vit_cap_tok = AutoTokenizer.from_pretrained(_VIT_CAP_ID)
 
-CAPTION_CANDIDATES = [
-    PRIMARY_CAPTION,                                # 1) whatever you set
-    "Salesforce/blip-image-captioning-base",        # 2) fallback
-    "Salesforce/blip-image-captioning-large",       # 3) fallback
-    "microsoft/git-base-coco",                      # 4) fallback
-    "ydshieh/vit-gpt2-coco-en",                     # 5) fallback
-]
+# Primary captioner (better on CPU)
+BLIP_ID = "Salesforce/blip-image-captioning-base"
+blip_proc = BlipProcessor.from_pretrained(BLIP_ID)
+blip_model = BlipForConditionalGeneration.from_pretrained(BLIP_ID)
 
-print(f"[startup] token? {bool(HF_TOKEN)} | primary_caption='{PRIMARY_CAPTION}' | llm='{LLM_MODEL}'")
+# Story LLM (small, CPU-friendly)
+STORY_ID = "Qwen/Qwen2.5-1.5B-Instruct"
+story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
+story_model = AutoModelForCausalLM.from_pretrained(
+    STORY_ID,
+    device_map="cpu",
+    dtype=torch.float32,
+    low_cpu_mem_usage=True,
+)
 
-def _auth_header():
-    return {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+# Lightweight CLIP for grounding
+CLIP_ID = "openai/clip-vit-base-patch32"
+clip_model = CLIPModel.from_pretrained(CLIP_ID)
+clip_proc = CLIPProcessor.from_pretrained(CLIP_ID)
 
-def _caption_via_client(model_id, img):
-    from huggingface_hub import InferenceClient
-    client = InferenceClient(model_id, token=HF_TOKEN, timeout=120)
-    return client.image_to_text(img).strip()
-
-def _caption_via_rest_models(model_id, img):
-    import io, requests
-    buf = io.BytesIO(); img.save(buf, format="PNG")
-    r = requests.post(
-        f"https://api-inference.huggingface.co/models/{model_id}",
-        headers={**_auth_header(), "Content-Type": "application/octet-stream"},
-        data=buf.getvalue(),
-        timeout=120,
-    )
-    r.raise_for_status()
-    data = r.json()
-    if isinstance(data, list) and data and "generated_text" in data[0]:
-        return data[0]["generated_text"].strip()
-    if isinstance(data, dict) and "generated_text" in data:
-        return data["generated_text"].strip()
-    return str(data)
-
-def _caption_via_rest_pipeline(img):
-    """Last-resort: task pipeline route (no model id)."""
-    import io, requests
-    buf = io.BytesIO(); img.save(buf, format="PNG")
-    r = requests.post(
-        "https://api-inference.huggingface.co/pipeline/image-to-text",
-        headers={**_auth_header(), "Content-Type": "application/octet-stream"},
-        data=buf.getvalue(),
-        timeout=120,
-    )
-    r.raise_for_status()
-    data = r.json()
-    # task route usually returns [{"generated_text": "..."}]
-    if isinstance(data, list) and data and "generated_text" in data[0]:
-        return data[0]["generated_text"].strip()
-    if isinstance(data, dict) and "generated_text" in data:
-        return data["generated_text"].strip()
-    return str(data)
-
-def caption_api(img):
-    errors = []
-    # Try each known-good model via client & /models REST
-    for mid in CAPTION_CANDIDATES:
-        mid_clean = (mid or "").strip()
-        if not mid_clean:
-            continue
-        print(f"[caption] try: {mid_clean!r}")
-        try:
-            return _caption_via_client(mid_clean, img)
-        except Exception as e1:
-            try:
-                return _caption_via_rest_models(mid_clean, img)
-            except Exception as e2:
-                msg = f"{mid_clean}: client={type(e1).__name__} {e1} | rest={type(e2).__name__} {e2}"
-                print(f"[caption] fail: {msg}")
-                errors.append(msg)
-                continue
-
-    # FINAL fallback → task route
-    print("[caption] trying pipeline/image-to-text fallback")
-    try:
-        return _caption_via_rest_pipeline(img)
-    except Exception as e:
-        raise RuntimeError("caption_api failed for all models and pipeline:\n"
-                           + "\n".join(errors) + f"\nPIPELINE: {type(e).__name__} {e}")
+# ---------------- Helpers ----------------
+def word_count(s: str) -> int:
+    return len(re.findall(r"\b\w+\b", s))
 
 def smart_trim_to_max_words(text: str, max_words: int) -> str:
     tokens = re.findall(r"\S+", text)
@@ -121,112 +75,193 @@ def parse_title_and_story(text: str):
         return m.group(1).strip(), m.group(2).strip()
     return "", t
 
+# ---- Captioning ----
+def caption_blip(path: str) -> str:
+    img = Image.open(path).convert("RGB")
+    inputs = blip_proc(images=img, return_tensors="pt")
+    with torch.no_grad():
+        out = blip_model.generate(**inputs, max_new_tokens=32)
+    text = blip_proc.tokenizer.decode(out[0], skip_special_tokens=True)
+    return text.strip()
 
-# ====== Prompting + story generation =========================================
-def build_user_prompt(image_desc: str, audience: str, story_type: str,
-                      min_words: int, max_words: int, gen_title: bool) -> str:
+def caption_vit(path: str) -> str:
+    img = Image.open(path).convert("RGB")
+    pixels = vit_cap_proc(images=img, return_tensors="pt").pixel_values
+    with torch.no_grad():
+        ids = vit_cap_model.generate(
+            pixels,
+            max_length=24,
+            num_beams=2,
+            no_repeat_ngram_size=2,
+        )
+    return vit_cap_tok.decode(ids[0], skip_special_tokens=True).strip()
+
+def auto_caption(path: str) -> str:
+    try:
+        txt = caption_blip(path)
+        if len(txt.split()) < 2:
+            return caption_vit(path)
+        return txt
+    except Exception:
+        return caption_vit(path)
+
+# ---- Dynamic grounding labels (generic for any image) ----
+def extract_keywords(text: str, k: int = 12):
+    stop = {
+        "a","an","the","and","or","of","to","in","on","at","for","by","from",
+        "with","without","is","are","was","were","be","been","it","its",
+        "this","that","these","those","his","her","their","your","my","our",
+        "into","over","under","near","very","more","most","such","as"
+    }
+    words = [w.lower() for w in re.findall(r"[A-Za-z][A-Za-z-]*", text)]
+    keep = []
+    for w in words:
+        if w not in stop and len(w) > 2 and w not in keep:
+            keep.append(w)
+        if len(keep) >= k:
+            break
+    return keep
+
+GENERAL_FALLBACK = [
+    "person","people","man","woman","child","group","selfie",
+    "indoor","outdoor","nature","city","shop","market","street","room",
+    "animal","dog","cat","bird","horse","fish",
+    "tree","flower","plant","sky","water","ocean","beach","mountain","river",
+    "building","bridge","car","bike","bus","train",
+    "food","drink","fruit","vegetable","dessert",
+    "book","computer","phone","tv","table","chair","window","door","sign",
+    "art","statue","painting","sculpture"
+]
+
+def dynamic_label_pool(caption: str, cap_limit: int = 24) -> list:
+    kws = extract_keywords(caption, k=cap_limit)
+    pool = kws + [w for w in GENERAL_FALLBACK if w not in kws]
+    return pool[:40]
+
+def clip_top_labels(path: str, caption: str, k: int = 4) -> list:
+    labels = dynamic_label_pool(caption)
+    img = Image.open(path).convert("RGB")
+    inputs = clip_proc(text=labels, images=img, return_tensors="pt", padding=True)
+    with torch.no_grad():
+        out = clip_model(**inputs)
+        logits = out.logits_per_image[0]
+        vals, idx = torch.topk(logits, k=min(k, len(labels)))
+    return [labels[i] for i in idx.tolist()]
+
+# ---- Prompt & generation ----
+def build_user_prompt(
+    image_desc: str,
+    audience: str,
+    story_type: str,
+    min_words: int,
+    max_words: int,
+    gen_title: bool,
+    force_words=None,
+) -> str:
     if gen_title:
         title_part = (
             "Start with one line exactly like: Title: <concise, original title>\n"
             "Then a blank line, then the story.\n"
         )
     else:
-        title_part = "Not generating the title. Start directly with the story.\n"
+        title_part = "Do NOT include any title line. Start directly with the story.\n"
 
-    return (
-        f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience, "
+    grounding = ""
+    if force_words:
+        fw = ", ".join(force_words)
+        grounding = (
+            "\nIn the FIRST paragraph, explicitly include at least 2 of these words: "
+            + fw + ". Do not invent unrelated objects."
+        )
+
+    prompt = (
+        f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience "
         f"based ONLY on this image description:\n"
         f"{image_desc}\n\n"
         "Constraints:\n"
         f"- Length: between {min_words} and {max_words} words.\n"
         f"- Tone/genre: {story_type}.\n"
         "- No meta commentary or warnings.\n"
-        "- Keep it self-contained, vivid, and consistent with the image description.\n\n"
+        "- Keep it self-contained and vivid."
+        f"{grounding}\n\n"
         "Formatting:\n"
         f"{title_part}"
         "If you include a title, put nothing else on the title line except the title itself.\n"
-    ).strip()
+    )
+    return prompt.strip()
 
-def generate_story_api(prompt_text: str, temperature: float, top_p: float, max_words: int) -> str:
-    approx_tokens = int(max_words * 1.7)
-    max_new_tokens = max(180, min(1600, approx_tokens + 80))
-    # Client path
-    try:
-        return llm_client.text_generation(
-            prompt_text,
-            max_new_tokens=int(max_new_tokens),
+def qwen_chat_prompt(user_text: str) -> str:
+    msgs = [
+        {"role": "system", "content": "You are a helpful, creative storyteller."},
+        {"role": "user", "content": user_text},
+    ]
+    return story_tok.apply_chat_template(
+        msgs, tokenize=False, add_generation_prompt=True
+    )
+
+def generate_story(user_text: str, temperature: float, top_p: float, max_words: int) -> str:
+    prompt_text = qwen_chat_prompt(user_text)
+    inputs = story_tok(prompt_text, return_tensors="pt")
+    input_len = inputs["input_ids"].shape[1]
+
+    # Token headroom for full endings (tokens != words)
+    approx_tokens = int(max_words * 1.7)            # ~1.5–1.8 tokens per word
+    max_new_tokens = max(180, min(1200, approx_tokens + 80))
+
+    with torch.no_grad():
+        outputs = story_model.generate(
+            **inputs,
+            do_sample=True,
             temperature=float(temperature),
             top_p=float(top_p),
-        ).strip()
-    except Exception as e1:
-        # REST fallback
-        payload = {
-            "inputs": prompt_text,
-            "parameters": {
-                "max_new_tokens": int(max_new_tokens),
-                "temperature": float(temperature),
-                "top_p": float(top_p),
-            },
-            "options": {"wait_for_model": True},
-        }
-        try:
-            r = requests.post(
-                f"https://api-inference.huggingface.co/models/{LLM_MODEL}",
-                headers={**_auth_header(), "Content-Type": "application/json"},
-                json=payload,
-                timeout=180,
-            )
-            r.raise_for_status()
-            data = r.json()
-            if isinstance(data, list) and data and "generated_text" in data[0]:
-                return data[0]["generated_text"].strip()
-            if isinstance(data, dict) and "generated_text" in data:
-                return data["generated_text"].strip()
-            return str(data)
-        except Exception as e2:
-            raise RuntimeError(f"generate_story_api failed: {e1} | rest: {e2}")
-
-# ====== Inference pipeline ====================================================
-def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
-    try:
-        min_words = int(min_words); max_words = int(max_words)
-        if min_words < 200: min_words = 200
-        if max_words > 1000: max_words = 1000
-        if min_words > max_words:
-            min_words, max_words = max_words, min_words
-            gr.Warning("Swapped min/max to keep a valid range (200–1000).")
-
-        if image_input is None:
-            gr.Warning("Please upload an image.")
-            return "", ""
-
-        gr.Info("Captioning the image (remote API)…")
-        image_desc = caption_api(image_input)
-
-        user_prompt = build_user_prompt(
-            image_desc, audience, story_type, min_words, max_words, gen_title
+            repetition_penalty=1.05,
+            max_new_tokens=max_new_tokens,
+            eos_token_id=story_tok.eos_token_id,
+            pad_token_id=story_tok.eos_token_id,
         )
 
-        gr.Info("Generating your story (remote API)…")
-        raw = generate_story_api(user_prompt, temperature, top_p, max_words)
+    gen_ids = outputs[0][input_len:]
+    return story_tok.decode(gen_ids, skip_special_tokens=True).strip()
 
-        title, story = parse_title_and_story(raw)
-        story = "\n\n".join(p for p in story.split("\n") if p.strip())
+# ---------------- Core callback ----------------
+def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
+    min_words = int(min_words); max_words = int(max_words)
+    if min_words < 200: min_words = 200
+    if max_words > 1000: max_words = 1000
+    if min_words > max_words:
+        min_words, max_words = max_words, min_words
+        gr.Warning("Swapped min/max to keep a valid range (200–1000).")
+    if image_input is None:
+        gr.Warning("Please upload an image.")
+        return "", ""
 
+    gr.Info("Making a caption (BLIP)…")
+    image_desc = auto_caption(image_input)
+
+    try:
+        force_words = clip_top_labels(image_input, image_desc, k=4)
+    except Exception:
+        # fallback: use caption keywords if CLIP unavailable
+        force_words = extract_keywords(image_desc, k=4)
+
+    user_prompt = build_user_prompt(
+        image_desc, audience, story_type, min_words, max_words, gen_title, force_words
+    )
+
+    gr.Info("Writing your story with Qwen 2.5 (CPU)…")
+    raw = generate_story(user_prompt, temperature, top_p, max_words)
+
+    title, story = parse_title_and_story(raw)
+    story = "\n\n".join(p for p in story.split("\n") if p.strip())
+
+    wc = word_count(story)
+    if wc > max_words:
+        story = smart_trim_to_max_words(story, max_words)
         wc = word_count(story)
-        if wc > max_words:
-            story = smart_trim_to_max_words(story, max_words)
-            wc = word_count(story)
-            gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
-        elif wc < min_words:
-            gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). "
-                       "Try lowering min or raising temperature.")
-        return title, story
-
-    except Exception as e:
-        err = f"Error: {type(e).__name__}: {e}"
-        gr.Warning(err)
-        return "Error", err
+        gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
+    elif wc < min_words:
+        gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). Try lowering min or raising temperature.")
+    return title, story
 
 def download_story(title: str, story: str):
     if not story.strip():
@@ -242,7 +277,7 @@ def download_story(title: str, story: str):
         f.write(story.strip() + "\n")
     return path
 
-# ====== UI ====================================================================
+# ---------------- UI (purple cards, Title kept) ----------------
 CSS = (
   "body{background:#f6f7fb}"
   "#col{max-width:1200px;margin:0 auto;padding:12px}"
@@ -262,23 +297,25 @@ THEME = gr.themes.Soft(
     neutral_hue=gr.themes.colors.gray,
 )
 
-with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
+with gr.Blocks(css=CSS, theme=THEME, title="Image → Story Generator") as demo:
     with gr.Column(elem_id="col"):
         gr.Markdown(
             "<div style='text-align:center'>"
-            "<h1>Image to Story (API)</h1>"
-            "<p class='muted' style='margin-top:-4px'>Upload an image and let the app call remote models to craft a story.</p>"
-            "</div>"
+            "<h1>Image → Story</h1>"
+            "<p class='muted' style='margin-top:-4px'>Upload an image, pick a genre, set word limits, and (optionally) generate a title.</p>"
+            "<div class='muted' style='font-size:13px'>"
+            "Captioner: BLIP base (fallback: ViT-GPT2) · "
+            "Story LLM: <code>Qwen/Qwen2.5-1.5B-Instruct</code>"
+            "</div></div>"
         )
 
         with gr.Row():
-            # Left: inputs
+            # -------- Left column (inputs) --------
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Upload Image</span>")
                 with gr.Column(elem_classes=["card"]):
-                    # IMPORTANT: pass a Pillow image to caption_api
-                    image_in = gr.Image(label=None, type="pil", height=320)
-                    gr.Markdown("<div class='muted'>Supported: JPG/PNG.</div>")
+                    image_in = gr.Image(label=None, type="filepath", height=320)
+                    gr.Markdown("<div class='muted'>Supported: JPG/PNG. Clear scenes with people/objects work best.</div>")
 
                 with gr.Row():
                     with gr.Column(elem_classes=["card"]):
@@ -297,20 +334,31 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
                 with gr.Row():
                     with gr.Column(elem_classes=["card"]):
                         min_words = gr.Number(value=400, label="Minimum Words", precision=0)
-                        gr.Markdown("<div class='muted'>200</div>")
+                        gr.Markdown("<div class='muted'>200 – 1000</div>")
                     with gr.Column(elem_classes=["card"]):
-                        max_words = gr.Number(value=800, label="Maximum Words", precision=0)
-                        gr.Markdown("<div class='muted'>1000</div>")
+                        max_words = gr.Number(value=700, label="Maximum Words", precision=0)
+                        gr.Markdown("<div class='muted'>200 – 1000</div>")
 
                 with gr.Column(elem_classes=["card"]):
                     gen_title = gr.Checkbox(value=True, label="Generate Title")
-                    temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Imagination Level")
-                    top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Vocabulary breadth")
+                    temperature = gr.Slider(0.1, 1.5, value=0.9, step=0.05, label="Creativity (temperature)")
+                    top_p = gr.Slider(0.1, 1.0, value=0.95, step=0.05, label="Top-p")
 
                 with gr.Row():
                     submit_btn = gr.Button("Generate Story", variant="primary", elem_classes=["fullw"])
 
-            # Right: outputs
+                gr.Markdown(
+                    "<div class='tips' style='margin-top:10px'>"
+                    "<strong>Tips for better stories:</strong>"
+                    "<ul style='margin:6px 0 0 18px'>"
+                    "<li>Use clear, high-quality images</li>"
+                    "<li>People, objects, or scenes work best</li>"
+                    "<li>Try different genres for varied styles</li>"
+                    "<li>Adjust word counts to your preferred length</li>"
+                    "</ul></div>"
+                )
+
+            # -------- Right column (outputs) --------
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Generated Story</span>")
                 with gr.Column(elem_classes=["card"]):
@@ -327,8 +375,9 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
                         show_copy_button=True,
                     )
                 with gr.Column(elem_classes=["card"]):
-                    download_btn = gr.DownloadButton("Download story")
+                    download_btn = gr.DownloadButton("📥 Download .txt")
 
+        # wiring
         submit_btn.click(
             fn=infer,
             inputs=[image_in, audience, story_type, min_words, max_words, gen_title, temperature, top_p],
@@ -337,4 +386,4 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
         download_btn.click(fn=download_story, inputs=[title_out, story_out], outputs=download_btn)
 
 if __name__ == "__main__":
-    demo.queue().launch(ssr_mode=True)
+    demo.queue().launch(ssr_mode=False)
