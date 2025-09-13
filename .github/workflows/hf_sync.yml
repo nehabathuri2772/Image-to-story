@@ -1,5 +1,4 @@
 name: Sync to Hugging Face Space
-
 on:
   push:
     branches: [ "main" ]
@@ -7,18 +6,20 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - run: pip install --upgrade huggingface_hub
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install client
-        run: pip install --upgrade huggingface_hub
+      - name: Validate secrets
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+        run: |
+          if [ -z "$HF_TOKEN" ]; then echo "ERROR: HF_TOKEN is missing"; exit 1; fi
+          if [ -z "$HF_SPACE_ID" ]; then echo "ERROR: HF_SPACE_ID is missing"; exit 1; fi
+          echo "Secrets present."
 
       - name: Upload to Space
         env:
@@ -28,19 +29,12 @@ jobs:
           python - <<'PY'
           import os
           from huggingface_hub import HfApi
-
-          token = os.environ["HF_TOKEN"]
-          space_id = os.environ["HF_SPACE_ID"]  # e.g., "nehabathuri/Image-to-Story"
-          api = HfApi(token=token)
-
+          api = HfApi(token=os.environ["HF_TOKEN"])
           api.upload_folder(
               folder_path=".",
-              repo_id=space_id,
+              repo_id=os.environ["HF_SPACE_ID"],  # e.g., nehabathuri/Image-to-Story
               repo_type="space",
-              ignore_patterns=[
-                  ".git*", ".github*", "__pycache__*", "*.pyc",
-                  "models/*", "data/*", "*.pt", "*.bin"
-              ]
+              ignore_patterns=[".git*", ".github*", "__pycache__*", "*.pyc", "models/*","data/*","*.pt","*.bin"]
           )
-          print(f"Uploaded to https://huggingface.co/spaces/{space_id}")
+          print("Upload complete.")
           PY
