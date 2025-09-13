@@ -1,3 +1,11 @@
+import requests
+print("[net] hf api status:",
+      requests.get("https://api-inference.huggingface.co/status/health",
+                   headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN','')}"}
+      ).status_code)
+print("[net] models GET:",
+      requests.get("https://api-inference.huggingface.co/models/distilbert-base-uncased").status_code)
+
 import os, re, io, tempfile
 from datetime import datetime
 
