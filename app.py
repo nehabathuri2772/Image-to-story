@@ -7,10 +7,13 @@ from huggingface_hub import InferenceClient
 import requests
 
 # ====== Env & config (sanitize) ===============================================
+# ==== Caption config (sanitize + candidates + pipeline fallback) ====
 _raw = (os.getenv("HF_TOKEN") or "").strip().strip('"').strip("'")
 HF_TOKEN = _raw if _raw.startswith("hf_") else None
 
 PRIMARY_CAPTION = (os.getenv("CAPTION_MODEL") or "nlpconnect/vit-gpt2-image-captioning").strip()
+LLM_MODEL       = (os.getenv("LLM_MODEL") or "Qwen/Qwen2.5-3B-Instruct").strip()
+
 CAPTION_CANDIDATES = [
     PRIMARY_CAPTION,                                # 1) whatever you set
     "Salesforce/blip-image-captioning-base",        # 2) fallback
@@ -18,7 +21,6 @@ CAPTION_CANDIDATES = [
     "microsoft/git-base-coco",                      # 4) fallback
     "ydshieh/vit-gpt2-coco-en",                     # 5) fallback
 ]
-LLM_MODEL = (os.getenv("LLM_MODEL") or "Qwen/Qwen2.5-3B-Instruct").strip()
 
 print(f"[startup] token? {bool(HF_TOKEN)} | primary_caption='{PRIMARY_CAPTION}' | llm='{LLM_MODEL}'")
 
@@ -30,7 +32,7 @@ def _caption_via_client(model_id, img):
     client = InferenceClient(model_id, token=HF_TOKEN, timeout=120)
     return client.image_to_text(img).strip()
 
-def _caption_via_rest(model_id, img):
+def _caption_via_rest_models(model_id, img):
     import io, requests
     buf = io.BytesIO(); img.save(buf, format="PNG")
     r = requests.post(
@@ -47,29 +49,51 @@ def _caption_via_rest(model_id, img):
         return data["generated_text"].strip()
     return str(data)
 
+def _caption_via_rest_pipeline(img):
+    """Last-resort: task pipeline route (no model id)."""
+    import io, requests
+    buf = io.BytesIO(); img.save(buf, format="PNG")
+    r = requests.post(
+        "https://api-inference.huggingface.co/pipeline/image-to-text",
+        headers={**_auth_header(), "Content-Type": "application/octet-stream"},
+        data=buf.getvalue(),
+        timeout=120,
+    )
+    r.raise_for_status()
+    data = r.json()
+    # task route usually returns [{"generated_text": "..."}]
+    if isinstance(data, list) and data and "generated_text" in data[0]:
+        return data[0]["generated_text"].strip()
+    if isinstance(data, dict) and "generated_text" in data:
+        return data["generated_text"].strip()
+    return str(data)
+
 def caption_api(img):
     errors = []
+    # Try each known-good model via client & /models REST
     for mid in CAPTION_CANDIDATES:
         mid_clean = (mid or "").strip()
         if not mid_clean:
             continue
         print(f"[caption] try: {mid_clean!r}")
-        # 1) client
         try:
             return _caption_via_client(mid_clean, img)
         except Exception as e1:
-            # 2) raw REST
             try:
-                return _caption_via_rest(mid_clean, img)
+                return _caption_via_rest_models(mid_clean, img)
             except Exception as e2:
                 msg = f"{mid_clean}: client={type(e1).__name__} {e1} | rest={type(e2).__name__} {e2}"
                 print(f"[caption] fail: {msg}")
                 errors.append(msg)
                 continue
-    raise RuntimeError("caption_api failed for all models:\n" + "\n".join(errors))
-# ====== Helpers ===============================================================
-def word_count(s: str) -> int:
-    return len(re.findall(r"\b\w+\b", s))
+
+    # FINAL fallback → task route
+    print("[caption] trying pipeline/image-to-text fallback")
+    try:
+        return _caption_via_rest_pipeline(img)
+    except Exception as e:
+        raise RuntimeError("caption_api failed for all models and pipeline:\n"
+                           + "\n".join(errors) + f"\nPIPELINE: {type(e).__name__} {e}")
 
 def smart_trim_to_max_words(text: str, max_words: int) -> str:
     tokens = re.findall(r"\S+", text)
