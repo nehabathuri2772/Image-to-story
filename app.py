@@ -45,32 +45,32 @@ def _hf_headers():
     return {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
 def caption_api(img: Image.Image) -> str:
-    """Try client.image_to_text; if it fails, fallback to raw REST."""
     try:
         return cap_client.image_to_text(img).strip()
     except Exception as e1:
-        # Fallback: REST POST with image bytes
+        import io, requests
         try:
             buf = io.BytesIO()
             img.save(buf, format="PNG")
             r = requests.post(
                 f"https://api-inference.huggingface.co/models/{CAPTION_MODEL}",
-                headers=_hf_headers(),
+                headers={
+                    **({"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}),
+                    "Content-Type": "application/octet-stream",
+                },
                 data=buf.getvalue(),
                 timeout=120,
             )
             r.raise_for_status()
             data = r.json()
-            # Common HF response formats:
             if isinstance(data, list) and data and "generated_text" in data[0]:
                 return data[0]["generated_text"].strip()
-            # Some models return {"generated_text": "..."} directly
             if isinstance(data, dict) and "generated_text" in data:
                 return data["generated_text"].strip()
-            # Unknown shape → return stringified payload
             return str(data)
         except Exception as e2:
             raise RuntimeError(f"caption_api failed: {e1} | fallback: {e2}")
+
 
 def build_user_prompt(image_desc: str, audience: str, story_type: str,
                       min_words: int, max_words: int, gen_title: bool) -> str:
