@@ -1,18 +1,23 @@
-import os, re, tempfile
+import os, re, io, tempfile
 from datetime import datetime
 
 import gradio as gr
 from PIL import Image
 from huggingface_hub import InferenceClient
+import requests
 
-# ====== Config (set these in Space → Settings → Variables & secrets) ======
-HF_TOKEN = os.getenv("HF_TOKEN")  # REQUIRED for private models & higher limits
+# ====== Config (Space → Settings → Variables & secrets) ======
+HF_TOKEN = os.getenv("HF_TOKEN")  # strongly recommended
 CAPTION_MODEL = os.getenv("CAPTION_MODEL", "nlpconnect/vit-gpt2-image-captioning")
 LLM_MODEL     = os.getenv("LLM_MODEL",     "Qwen/Qwen2.5-3B-Instruct")
 
-# ====== Inference API clients (no local transformers/torch) ======
-cap_client = InferenceClient(CAPTION_MODEL, token=HF_TOKEN)
-llm_client = InferenceClient(LLM_MODEL, token=HF_TOKEN)
+# Warn if running without token (lower rate limits)
+if not HF_TOKEN:
+    gr.Warning("Running without HF_TOKEN → public rate limits; you may see 429/401 errors.")
+
+# ====== Inference API clients ======
+cap_client = InferenceClient(CAPTION_MODEL, token=HF_TOKEN, timeout=120)
+llm_client = InferenceClient(LLM_MODEL, token=HF_TOKEN, timeout=120)
 
 # ----------------- Helpers -----------------
 def word_count(s: str) -> int:
@@ -35,20 +40,40 @@ def parse_title_and_story(text: str):
         return m.group(1).strip(), m.group(2).strip()
     return "", t
 
-# ----------------- API calls -----------------
-def caption_api(img: Image.Image) -> str:
-    """Remote image → text via HF Inference API."""
-    # image_to_text returns a plain string caption
-    return cap_client.image_to_text(img).strip()
+# ----------------- API wrappers w/ fallback -----------------
+def _hf_headers():
+    return {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
-def build_user_prompt(
-    image_desc: str,
-    audience: str,
-    story_type: str,
-    min_words: int,
-    max_words: int,
-    gen_title: bool,
-) -> str:
+def caption_api(img: Image.Image) -> str:
+    """Try client.image_to_text; if it fails, fallback to raw REST."""
+    try:
+        return cap_client.image_to_text(img).strip()
+    except Exception as e1:
+        # Fallback: REST POST with image bytes
+        try:
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            r = requests.post(
+                f"https://api-inference.huggingface.co/models/{CAPTION_MODEL}",
+                headers=_hf_headers(),
+                data=buf.getvalue(),
+                timeout=120,
+            )
+            r.raise_for_status()
+            data = r.json()
+            # Common HF response formats:
+            if isinstance(data, list) and data and "generated_text" in data[0]:
+                return data[0]["generated_text"].strip()
+            # Some models return {"generated_text": "..."} directly
+            if isinstance(data, dict) and "generated_text" in data:
+                return data["generated_text"].strip()
+            # Unknown shape → return stringified payload
+            return str(data)
+        except Exception as e2:
+            raise RuntimeError(f"caption_api failed: {e1} | fallback: {e2}")
+
+def build_user_prompt(image_desc: str, audience: str, story_type: str,
+                      min_words: int, max_words: int, gen_title: bool) -> str:
     if gen_title:
         title_part = (
             "Start with one line exactly like: Title: <concise, original title>\n"
@@ -57,7 +82,7 @@ def build_user_prompt(
     else:
         title_part = "Not generating the title. Start directly with the story.\n"
 
-    prompt = (
+    return (
         f"Write a **{story_type.lower()}** short story for a **{audience.lower()}** audience, "
         f"based ONLY on this image description:\n"
         f"{image_desc}\n\n"
@@ -69,55 +94,89 @@ def build_user_prompt(
         "Formatting:\n"
         f"{title_part}"
         "If you include a title, put nothing else on the title line except the title itself.\n"
-    )
-    return prompt.strip()
+    ).strip()
 
 def generate_story_api(prompt_text: str, temperature: float, top_p: float, max_words: int) -> str:
-    # quick heuristic to size max_new_tokens for the requested word-length
     approx_tokens = int(max_words * 1.7)
     max_new_tokens = max(180, min(1600, approx_tokens + 80))
-    return llm_client.text_generation(
-        prompt_text,
-        max_new_tokens=int(max_new_tokens),
-        temperature=float(temperature),
-        top_p=float(top_p),
-    ).strip()
+    try:
+        return llm_client.text_generation(
+            prompt_text,
+            max_new_tokens=int(max_new_tokens),
+            temperature=float(temperature),
+            top_p=float(top_p),
+        ).strip()
+    except Exception as e1:
+        # Fallback via REST
+        try:
+            payload = {
+                "inputs": prompt_text,
+                "parameters": {
+                    "max_new_tokens": int(max_new_tokens),
+                    "temperature": float(temperature),
+                    "top_p": float(top_p),
+                },
+                "options": {"wait_for_model": True},  # queue if model is cold
+            }
+            r = requests.post(
+                f"https://api-inference.huggingface.co/models/{LLM_MODEL}",
+                headers={**_hf_headers(), "Content-Type": "application/json"},
+                json=payload,
+                timeout=180,
+            )
+            r.raise_for_status()
+            data = r.json()
+            # Common format for text-generation: list of dicts with "generated_text"
+            if isinstance(data, list) and data and "generated_text" in data[0]:
+                return data[0]["generated_text"].strip()
+            if isinstance(data, dict) and "generated_text" in data:
+                return data["generated_text"].strip()
+            return str(data)
+        except Exception as e2:
+            raise RuntimeError(f"generate_story_api failed: {e1} | fallback: {e2}")
 
 # ----------------- Inference wiring -----------------
 def infer(image_input, audience, story_type, min_words, max_words, gen_title, temperature, top_p):
-    min_words = int(min_words); max_words = int(max_words)
-    if min_words < 200: min_words = 200
-    if max_words > 1000: max_words = 1000
-    if min_words > max_words:
-        min_words, max_words = max_words, min_words
-        gr.Warning("Swapped min/max to keep a valid range (200–1000).")
+    try:
+        min_words = int(min_words); max_words = int(max_words)
+        if min_words < 200: min_words = 200
+        if max_words > 1000: max_words = 1000
+        if min_words > max_words:
+            min_words, max_words = max_words, min_words
+            gr.Warning("Swapped min/max to keep a valid range (200–1000).")
 
-    if image_input is None:
-        gr.Warning("Please upload an image.")
-        return "", ""
+        if image_input is None:
+            gr.Warning("Please upload an image.")
+            return "", ""
 
-    gr.Info("Captioning the image (remote API)…")
-    image_desc = caption_api(image_input)
+        gr.Info("Captioning the image (remote API)…")
+        image_desc = caption_api(image_input)
 
-    user_prompt = build_user_prompt(
-        image_desc, audience, story_type, min_words, max_words, gen_title
-    )
+        user_prompt = build_user_prompt(
+            image_desc, audience, story_type, min_words, max_words, gen_title
+        )
 
-    gr.Info("Generating your story (remote API)…")
-    raw = generate_story_api(user_prompt, temperature, top_p, max_words)
+        gr.Info("Generating your story (remote API)…")
+        raw = generate_story_api(user_prompt, temperature, top_p, max_words)
 
-    title, story = parse_title_and_story(raw)
-    story = "\n\n".join(p for p in story.split("\n") if p.strip())
+        title, story = parse_title_and_story(raw)
+        story = "\n\n".join(p for p in story.split("\n") if p.strip())
 
-    wc = word_count(story)
-    if wc > max_words:
-        story = smart_trim_to_max_words(story, max_words)
         wc = word_count(story)
-        gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
-    elif wc < min_words:
-        gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). "
-                   "Try lowering min or raising temperature.")
-    return title, story
+        if wc > max_words:
+            story = smart_trim_to_max_words(story, max_words)
+            wc = word_count(story)
+            gr.Info(f"Trimmed to {wc} words to respect the {max_words}-word limit.")
+        elif wc < min_words:
+            gr.Warning(f"Generated {wc} words (target {min_words}-{max_words}). "
+                       "Try lowering min or raising temperature.")
+        return title, story
+
+    except Exception as e:
+        # Show the real error in the UI so you can diagnose quickly
+        err = f"Error: {type(e).__name__}: {e}"
+        gr.Warning(err)
+        return "Error", err
 
 def download_story(title: str, story: str):
     if not story.strip():
@@ -163,10 +222,11 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
         )
 
         with gr.Row():
-            # -------- Left column: inputs --------
+            # Left: inputs
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Upload Image</span>")
                 with gr.Column(elem_classes=["card"]):
+                    # IMPORTANT: use type='pil' so we pass a Pillow image to API wrapper
                     image_in = gr.Image(label=None, type="pil", height=320)
                     gr.Markdown("<div class='muted'>Supported: JPG/PNG.</div>")
 
@@ -200,17 +260,7 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image to Story (API)") as demo:
                 with gr.Row():
                     submit_btn = gr.Button("Generate Story", variant="primary", elem_classes=["fullw"])
 
-                gr.Markdown(
-                    "<div class='tips' style='margin-top:10px'>"
-                    "<strong>Tips for better stories:</strong>"
-                    "<ul style='margin:6px 0 0 18px'>"
-                    "<li>Use clear, high-quality images</li>"
-                    "<li>Try different genres for varied styles</li>"
-                    "<li>Adjust word counts to your preferred length</li>"
-                    "</ul></div>"
-                )
-
-            # -------- Right column: outputs --------
+            # Right: outputs
             with gr.Column(scale=1):
                 gr.Markdown("<span class='chip'>Generated Story</span>")
                 with gr.Column(elem_classes=["card"]):
