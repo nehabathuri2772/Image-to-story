@@ -1,0 +1,46 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [ "main" ]
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Install client
+        run: pip install --upgrade huggingface_hub
+
+      - name: Upload to Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"]
+          space_id = os.environ["HF_SPACE_ID"]  # e.g., "nehabathuri/Image-to-Story"
+          api = HfApi(token=token)
+
+          api.upload_folder(
+              folder_path=".",
+              repo_id=space_id,
+              repo_type="space",
+              ignore_patterns=[
+                  ".git*", ".github*", "__pycache__*", "*.pyc",
+                  "models/*", "data/*", "*.pt", "*.bin"
+              ]
+          )
+          print(f"Uploaded to https://huggingface.co/spaces/{space_id}")
+          PY
