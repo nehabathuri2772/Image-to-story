@@ -1,4 +1,5 @@
 import requests
+import os
 print("[net] hf api status:",
       requests.get("https://api-inference.huggingface.co/status/health",
                    headers={"Authorization": f"Bearer {os.getenv('HF_TOKEN','')}"}
