@@ -1,7 +1,6 @@
-# app.py — Lightweight local "Image → Story" (no API, CPU-friendly)
-import os, re, tempfile
-from datetime import datetime
+# app.py — Image → Story (local CPU) with API endpoints for Hugging Face Spaces
 
+import os, re, tempfile
 import gradio as gr
 import torch
 from PIL import Image
@@ -21,13 +20,13 @@ except Exception:
     pass
 
 # ---------- Models (small & local) ----------
-# 1) Captioner: ViT-GPT2 (compact vs BLIP)
+# 1) Image captioner
 CAPTION_ID = "nlpconnect/vit-gpt2-image-captioning"
 cap_model = VisionEncoderDecoderModel.from_pretrained(CAPTION_ID)
 cap_proc  = ViTImageProcessor.from_pretrained(CAPTION_ID)
 cap_tok   = AutoTokenizer.from_pretrained(CAPTION_ID)
 
-# 2) Story LLM: small instruct model (override via env SMALL_LLM_ID if needed)
+# 2) Small instruction LLM (override with env SMALL_LLM_ID if needed)
 STORY_ID = (os.getenv("SMALL_LLM_ID") or "Qwen/Qwen2.5-0.5B-Instruct").strip()
 story_tok = AutoTokenizer.from_pretrained(STORY_ID, use_fast=True)
 story_model = AutoModelForCausalLM.from_pretrained(
@@ -70,7 +69,6 @@ def apply_chat_prompt(system_text: str, user_text: str) -> str:
 
 # ---------- Captioning (PIL → text) ----------
 def _shrink(img: Image.Image, max_side: int = 384) -> Image.Image:
-    # keep aspect ratio; smaller image → faster CPU captioning
     w, h = img.size
     m = max(w, h)
     if m <= max_side:
@@ -207,7 +205,6 @@ with gr.Blocks(css=CSS, theme=THEME, title="Lightweight Image → Story (Local)"
 
         with gr.Row():
             with gr.Column(elem_classes=["card"]):
-                # Use PIL so captioner gets an in-memory image (faster than reading path)
                 image_in = gr.Image(label="Upload Image", type="pil", height=320)
 
         with gr.Row():
@@ -247,12 +244,19 @@ with gr.Blocks(css=CSS, theme=THEME, title="Lightweight Image → Story (Local)"
         with gr.Column(elem_classes=["card"]):
             download_btn = gr.DownloadButton("Download .txt")
 
+        # ---------- API endpoints (this is what makes it API-based) ----------
         submit_btn.click(
             fn=infer,
             inputs=[image_in, audience, genre, min_words, max_words, gen_title, temperature, top_p],
             outputs=[title_out, story_out],
+            api_name="generate"  # exposes /api/predict with api_name="/generate"
         )
-        download_btn.click(fn=download_story, inputs=[title_out, story_out], outputs=download_btn)
+        download_btn.click(
+            fn=download_story,
+            inputs=[title_out, story_out],
+            outputs=download_btn,
+            api_name="download"  # exposes /api/predict with api_name="/download"
+        )
 
 if __name__ == "__main__":
     demo.queue().launch(ssr_mode=False)
