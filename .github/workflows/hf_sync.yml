@@ -1,15 +1,20 @@
 name: Sync to Hugging Face Space
+
 on:
   push:
     branches: [ "main" ]
+  workflow_dispatch: {}   # <-- lets you run it manually from the Actions tab
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: { python-version: "3.10" }
+        with:
+          python-version: "3.10"
+
       - run: pip install --upgrade huggingface_hub
 
       - name: Validate secrets
@@ -32,9 +37,47 @@ jobs:
           api = HfApi(token=os.environ["HF_TOKEN"])
           api.upload_folder(
               folder_path=".",
-              repo_id=os.environ["HF_SPACE_ID"],  # e.g., nehabathuri/Image-to-Story
+              repo_id=os.environ["HF_SPACE_ID"],   # e.g., nehabathuri/Image-to-Story
               repo_type="space",
               ignore_patterns=[".git*", ".github*", "__pycache__*", "*.pyc", "models/*","data/*","*.pt","*.bin"]
           )
           print("Upload complete.")
+          PY
+
+      # ---------- NEW: Discord notification (extra credit) ----------
+      - name: Notify Discord
+        if: always()   # run whether the job succeeded or failed
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}   # add this secret in repo settings
+          RUN_STATUS: ${{ job.status }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          ACTOR: ${{ github.actor }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+          APP_URL: https://nehabathuri-image-to-story.hf.space
+        run: |
+          python - <<'PY'
+          import os, json, urllib.request
+          url = os.environ.get("DISCORD_WEBHOOK_URL")
+          if not url:
+              print("No DISCORD_WEBHOOK_URL configured; skipping Discord notify.")
+              raise SystemExit(0)
+
+          status = os.environ.get("RUN_STATUS", "unknown")
+          emoji = "✅" if status == "success" else "❌"
+          msg = (
+              f"{emoji} GitHub Action finished\n"
+              f"• Status: {status}\n"
+              f"• Repo: {os.environ.get('REPO')}\n"
+              f"• Actor: {os.environ.get('ACTOR')}\n"
+              f"• Run: {os.environ.get('RUN_NUMBER')}\n"
+              f"• Logs: https://github.com/{os.environ.get('REPO')}/actions/runs/{os.environ.get('RUN_ID')}\n"
+              f"• Space: https://huggingface.co/spaces/{os.environ.get('HF_SPACE_ID')}\n"
+              f"• Live App: {os.environ.get('APP_URL')}"
+          )
+          data = json.dumps({"content": msg}).encode("utf-8")
+          req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
+          with urllib.request.urlopen(req) as r:
+              print("Discord response status:", r.status)
           PY
