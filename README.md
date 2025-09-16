@@ -1,5 +1,5 @@
 ---
-title: Image To Story
+title: Image To Sto
 emoji: 👁
 colorFrom: pink
 colorTo: red
