@@ -1,23 +1,16 @@
-name: Sync to Hugging Face Space + Discord
-
+name: Sync to Hugging Face Space
 on:
   push:
-    branches: ["main"]          # change to ["**"] if you want all branches
-  workflow_dispatch: {}         # allow manual runs from the Actions tab
+    branches: [ "main" ]
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Setup Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      - name: Install huggingface_hub
-        run: pip install --upgrade huggingface_hub
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.10" }
+      - run: pip install --upgrade huggingface_hub
 
       - name: Validate secrets
         env:
@@ -28,17 +21,6 @@ jobs:
           if [ -z "$HF_SPACE_ID" ]; then echo "ERROR: HF_SPACE_ID is missing"; exit 1; fi
           echo "Secrets present."
 
-      # ------------------ Discord: START message ------------------
-      - name: Discord start
-        if: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          curl -sS -H "Content-Type: application/json" \
-            -d "{\"content\":\"🚀 Deploy started for $GITHUB_REPOSITORY (run #$GITHUB_RUN_NUMBER) by $GITHUB_ACTOR\"}" \
-            "$DISCORD_WEBHOOK_URL"
-
-      # ------------------ Hugging Face: keep the EXACT working step ------------------
       - name: Upload to Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
@@ -56,26 +38,3 @@ jobs:
           )
           print("Upload complete.")
           PY
-
-      # ------------------ Discord: END message ------------------
-      - name: Discord finish
-        if: ${{ always() && secrets.DISCORD_WEBHOOK_URL != '' }}
-        env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
-        run: |
-          STATUS="${{ job.status }}"
-          if [ "$STATUS" = "success" ]; then EMOJI="✅"; else EMOJI="❌"; fi
-          MSG="$EMOJI Deploy $STATUS for $GITHUB_REPOSITORY (run #$GITHUB_RUN_NUMBER)
-Space: https://huggingface.co/spaces/$HF_SPACE_ID
-Logs: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-
-          python - <<'PY'
-import json, os, urllib.request
-url=os.environ["DISCORD_WEBHOOK_URL"]
-msg=os.environ["MSG"]
-data=json.dumps({"content": msg}).encode("utf-8")
-req=urllib.request.Request(url, data=data, headers={"Content-Type":"application/json"})
-with urllib.request.urlopen(req) as r:
-    print("Discord HTTP", r.status)
-PY
