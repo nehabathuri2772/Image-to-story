@@ -2,8 +2,8 @@ name: Sync to Hugging Face Space + Discord
 
 on:
   push:
-    branches: ["main"]        # change to ["**"] if you want all branches
-  workflow_dispatch: {}        # allows manual runs from the Actions tab
+    branches: ["main"]
+  workflow_dispatch: {}
 
 jobs:
   sync:
@@ -14,6 +14,7 @@ jobs:
 
       - name: Validate secrets (no values shown)
         run: |
+          set -e
           test -n "${{ secrets.HF_TOKEN }}" && echo "HF_TOKEN: OK" || (echo "HF_TOKEN MISSING"; exit 1)
           test -n "${{ secrets.HF_SPACE_ID }}" && echo "HF_SPACE_ID: OK" || (echo "HF_SPACE_ID MISSING"; exit 1)
           if [ -z "${{ secrets.DISCORD_WEBHOOK_URL }}" ]; then
@@ -38,32 +39,83 @@ jobs:
           python-version: "3.10"
 
       - name: Install huggingface_hub
-        run: pip install --upgrade huggingface_hub
+        run: python -m pip install --upgrade huggingface_hub
+
+      - name: Check Hugging Face auth & repo
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
+        run: |
+          python - <<'PY'
+          import os, sys, textwrap
+          from huggingface_hub import HfApi
+
+          token = os.environ["HF_TOKEN"].strip()
+          repo_id = os.environ["HF_SPACE_ID"].strip()
+
+          api = HfApi(token=token)
+          try:
+            me = api.whoami(token=token)
+            print("✅ Authenticated as:", me.get("name") or me)
+          except Exception as e:
+            print("❌ whoami() failed:", e, file=sys.stderr)
+            sys.exit(1)
+
+          try:
+            # Ensure the space exists and is of type 'space'
+            api.create_repo(repo_id=repo_id, repo_type="space", exist_ok=True, space_sdk="gradio")
+            print("✅ Space exists:", repo_id)
+          except Exception as e:
+            print("❌ create_repo() failed for", repo_id, "->", e, file=sys.stderr)
+            sys.exit(1)
+
+          try:
+            files_before = api.list_repo_files(repo_id=repo_id, repo_type="space")
+            print("📄 Files BEFORE upload:", files_before)
+          except Exception as e:
+            print("⚠️ list_repo_files(before) failed:", e, file=sys.stderr)
+          PY
 
       - name: Upload to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
         run: |
+          set -e
           python - <<'PY'
-          import os
+          import os, sys
           from huggingface_hub import HfApi
-          api = HfApi(token=os.environ["HF_TOKEN"])
-          api.upload_folder(
-              folder_path=".",
-              repo_id=os.environ["HF_SPACE_ID"],   # e.g., nehabathuri/Image-to-Story
-              repo_type="space",
-              ignore_patterns=[
-                  ".git*", ".github*", "__pycache__*", "*.pyc",
-                  "models/*", "data/*", "*.pt", "*.bin"
-              ],
-          )
-          print("✅ Upload complete.")
+
+          token = os.environ["HF_TOKEN"].strip()
+          repo_id = os.environ["HF_SPACE_ID"].strip()
+
+          api = HfApi(token=token)
+          try:
+            api.upload_folder(
+                folder_path=".",
+                repo_id=repo_id,
+                repo_type="space",
+                commit_message=f"CI sync {os.getenv('GITHUB_SHA','')}",
+                ignore_patterns=[
+                    ".git*", ".github*", "__pycache__*", "*.pyc",
+                    "models/*", "data/*", "*.pt", "*.bin"
+                ],
+            )
+            print("✅ Upload complete.")
+          except Exception as e:
+            print("❌ upload_folder() failed:", e, file=sys.stderr)
+            sys.exit(1)
+
+          try:
+            files_after = api.list_repo_files(repo_id=repo_id, repo_type="space")
+            print("📄 Files AFTER upload:", files_after)
+          except Exception as e:
+            print("⚠️ list_repo_files(after) failed:", e, file=sys.stderr)
           PY
 
       # ------------------ Discord: END message ------------------
       - name: Discord finish
-        if: always() && ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+        if: ${{ always() && secrets.DISCORD_WEBHOOK_URL != '' }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
@@ -82,12 +134,11 @@ $STATUS – deploy for **$GITHUB_REPOSITORY**
 • Live App: https://nehabathuri-image-to-story.hf.space
 EOF
 )"
-          # Escape newlines for JSON
           JSON_PAYLOAD=$(python - <<'PY'
 import json, os
 print(json.dumps({"content": os.environ["MSG"]}))
 PY
 )
-          curl -sS -X POST -H "Content-Type: application/json" \
+          curl -sS -o /dev/null -w "Discord HTTP: %{http_code}\n" -X POST -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" \
             "$DISCORD_WEBHOOK_URL"
