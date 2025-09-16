@@ -12,4 +12,4 @@ pinned: false
 
 Check out the configuration reference at https://huggingface.co/docs/hub/spaces-config-reference
 
-"Hi discord changed"
+"Hi discord change"
