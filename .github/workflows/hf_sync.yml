@@ -2,8 +2,8 @@ name: Sync to Hugging Face Space + Discord
 
 on:
   push:
-    branches: ["main"]
-  workflow_dispatch: {}
+    branches: ["main"]          # change to ["**"] to trigger on all branches
+  workflow_dispatch: {}         # allow manual runs from the Actions tab
 
 jobs:
   sync:
@@ -47,13 +47,14 @@ jobs:
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
         run: |
           python - <<'PY'
-          import os, sys, textwrap
+          import os, sys
           from huggingface_hub import HfApi
 
           token = os.environ["HF_TOKEN"].strip()
           repo_id = os.environ["HF_SPACE_ID"].strip()
-
           api = HfApi(token=token)
+
+          # Verify auth
           try:
             me = api.whoami(token=token)
             print("✅ Authenticated as:", me.get("name") or me)
@@ -61,14 +62,15 @@ jobs:
             print("❌ whoami() failed:", e, file=sys.stderr)
             sys.exit(1)
 
+          # Ensure Space exists and is a Gradio Space
           try:
-            # Ensure the space exists and is of type 'space'
             api.create_repo(repo_id=repo_id, repo_type="space", exist_ok=True, space_sdk="gradio")
             print("✅ Space exists:", repo_id)
           except Exception as e:
             print("❌ create_repo() failed for", repo_id, "->", e, file=sys.stderr)
             sys.exit(1)
 
+          # List files before upload (best-effort)
           try:
             files_before = api.list_repo_files(repo_id=repo_id, repo_type="space")
             print("📄 Files BEFORE upload:", files_before)
@@ -88,8 +90,8 @@ jobs:
 
           token = os.environ["HF_TOKEN"].strip()
           repo_id = os.environ["HF_SPACE_ID"].strip()
-
           api = HfApi(token=token)
+
           try:
             api.upload_folder(
                 folder_path=".",
@@ -106,6 +108,7 @@ jobs:
             print("❌ upload_folder() failed:", e, file=sys.stderr)
             sys.exit(1)
 
+          # List files after upload (best-effort)
           try:
             files_after = api.list_repo_files(repo_id=repo_id, repo_type="space")
             print("📄 Files AFTER upload:", files_after)
@@ -125,7 +128,8 @@ jobs:
           else
             STATUS="❌ Failed"
           fi
-          MSG="$(cat <<EOF
+
+          MSG="$(cat <<'EOF'
 $STATUS – deploy for **$GITHUB_REPOSITORY**
 • Actor: $GITHUB_ACTOR
 • Run: #$GITHUB_RUN_NUMBER
@@ -139,6 +143,7 @@ import json, os
 print(json.dumps({"content": os.environ["MSG"]}))
 PY
 )
-          curl -sS -o /dev/null -w "Discord HTTP: %{http_code}\n" -X POST -H "Content-Type: application/json" \
+          curl -sS -o /dev/null -w "Discord HTTP: %{http_code}\n" \
+            -H "Content-Type: application/json" \
             -d "$JSON_PAYLOAD" \
             "$DISCORD_WEBHOOK_URL"
