@@ -1,32 +1,46 @@
-name: Sync to Hugging Face Space
+name: Sync to Hugging Face Space + Discord
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch: {}   # <-- lets you run it manually from the Actions tab
+    branches: ["main"]        # change to ["**"] if you want all branches
+  workflow_dispatch: {}        # allows manual runs from the Actions tab
 
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Validate secrets (no values shown)
+        run: |
+          test -n "${{ secrets.HF_TOKEN }}" && echo "HF_TOKEN: OK" || (echo "HF_TOKEN MISSING"; exit 1)
+          test -n "${{ secrets.HF_SPACE_ID }}" && echo "HF_SPACE_ID: OK" || (echo "HF_SPACE_ID MISSING"; exit 1)
+          if [ -z "${{ secrets.DISCORD_WEBHOOK_URL }}" ]; then
+            echo "WARNING: DISCORD_WEBHOOK_URL not set - Discord notify will be skipped."
+          else
+            echo "DISCORD_WEBHOOK_URL: OK"
+          fi
+
+      # ------------------ Discord: START message ------------------
+      - name: Discord start
+        if: ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d "{\"content\":\"🚀 Starting deploy for **$GITHUB_REPOSITORY** (run #$GITHUB_RUN_NUMBER) by **$GITHUB_ACTOR**\"}" \
+            "$DISCORD_WEBHOOK_URL"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - run: pip install --upgrade huggingface_hub
+      - name: Install huggingface_hub
+        run: pip install --upgrade huggingface_hub
 
-      - name: Validate secrets
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-          HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
-        run: |
-          if [ -z "$HF_TOKEN" ]; then echo "ERROR: HF_TOKEN is missing"; exit 1; fi
-          if [ -z "$HF_SPACE_ID" ]; then echo "ERROR: HF_SPACE_ID is missing"; exit 1; fi
-          echo "Secrets present."
-
-      - name: Upload to Space
+      - name: Upload to Hugging Face Space
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
@@ -39,45 +53,41 @@ jobs:
               folder_path=".",
               repo_id=os.environ["HF_SPACE_ID"],   # e.g., nehabathuri/Image-to-Story
               repo_type="space",
-              ignore_patterns=[".git*", ".github*", "__pycache__*", "*.pyc", "models/*","data/*","*.pt","*.bin"]
+              ignore_patterns=[
+                  ".git*", ".github*", "__pycache__*", "*.pyc",
+                  "models/*", "data/*", "*.pt", "*.bin"
+              ],
           )
-          print("Upload complete.")
+          print("✅ Upload complete.")
           PY
 
-      # ---------- NEW: Discord notification (extra credit) ----------
-      - name: Notify Discord
-        if: always()   # run whether the job succeeded or failed
+      # ------------------ Discord: END message ------------------
+      - name: Discord finish
+        if: always() && ${{ secrets.DISCORD_WEBHOOK_URL != '' }}
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}   # add this secret in repo settings
-          RUN_STATUS: ${{ job.status }}
-          REPO: ${{ github.repository }}
-          RUN_ID: ${{ github.run_id }}
-          RUN_NUMBER: ${{ github.run_number }}
-          ACTOR: ${{ github.actor }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           HF_SPACE_ID: ${{ secrets.HF_SPACE_ID }}
-          APP_URL: https://nehabathuri-image-to-story.hf.space
         run: |
-          python - <<'PY'
-          import os, json, urllib.request
-          url = os.environ.get("DISCORD_WEBHOOK_URL")
-          if not url:
-              print("No DISCORD_WEBHOOK_URL configured; skipping Discord notify.")
-              raise SystemExit(0)
-
-          status = os.environ.get("RUN_STATUS", "unknown")
-          emoji = "✅" if status == "success" else "❌"
-          msg = (
-              f"{emoji} GitHub Action finished\n"
-              f"• Status: {status}\n"
-              f"• Repo: {os.environ.get('REPO')}\n"
-              f"• Actor: {os.environ.get('ACTOR')}\n"
-              f"• Run: {os.environ.get('RUN_NUMBER')}\n"
-              f"• Logs: https://github.com/{os.environ.get('REPO')}/actions/runs/{os.environ.get('RUN_ID')}\n"
-              f"• Space: https://huggingface.co/spaces/{os.environ.get('HF_SPACE_ID')}\n"
-              f"• Live App: {os.environ.get('APP_URL')}"
-          )
-          data = json.dumps({"content": msg}).encode("utf-8")
-          req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-          with urllib.request.urlopen(req) as r:
-              print("Discord response status:", r.status)
-          PY
+          if [ "${{ job.status }}" = "success" ]; then
+            STATUS="✅ Success"
+          else
+            STATUS="❌ Failed"
+          fi
+          MSG="$(cat <<EOF
+$STATUS – deploy for **$GITHUB_REPOSITORY**
+• Actor: $GITHUB_ACTOR
+• Run: #$GITHUB_RUN_NUMBER
+• Logs: https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID
+• Space: https://huggingface.co/spaces/$HF_SPACE_ID
+• Live App: https://nehabathuri-image-to-story.hf.space
+EOF
+)"
+          # Escape newlines for JSON
+          JSON_PAYLOAD=$(python - <<'PY'
+import json, os
+print(json.dumps({"content": os.environ["MSG"]}))
+PY
+)
+          curl -sS -X POST -H "Content-Type: application/json" \
+            -d "$JSON_PAYLOAD" \
+            "$DISCORD_WEBHOOK_URL"
