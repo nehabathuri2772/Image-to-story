@@ -1,4 +1,7 @@
-gradio
-transformers
+gradio>=4.44.0
+gradio_client>=0.16.4
+transformers>=4.44.0
+accelerate>=0.33.0
 torch
-pillow
+sentencepiece
+Pillow
