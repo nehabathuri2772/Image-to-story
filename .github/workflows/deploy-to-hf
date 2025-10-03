@@ -1,19 +1,48 @@
-name: Deploy to Hugging Face Space
+name: Sync to Hugging Face Space
+
 on:
-  push: { branches: [ main ] }
+  push:
+    branches: [ main ]
   workflow_dispatch:
+
 jobs:
-  sync-to-space:
+  push:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout (with LFS)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           lfs: true
-      - name: Push to Hugging Face Space
+
+      - name: Verify HF token present
+        run: |
+          if [ -z "${{ secrets.HF_TOKEN }}" ]; then
+            echo "HF_TOKEN secret is missing. Add it in GitHub → Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+
+      - name: Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Configure LFS
+        run: |
+          git lfs install
+          git lfs fetch --all || true
+
+      - name: Add Space remote
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          git remote add space https://huggingface.co/spaces/nehabathuri/Image-to-Story || true
-          git push --force https://nehabathuri:$HF_TOKEN@huggingface.co/spaces/nehabathuri/Image-to-Story HEAD:main
+          # IMPORTANT: the owner must match the Space owner exactly (case-sensitive).
+          git remote remove space 2>/dev/null || true
+          git remote add space "https://nehabathuri:${HF_TOKEN}@huggingface.co/spaces/nehabathuri/Image-to-Story"
+          git remote -v
+
+      - name: Push to Space main
+        run: |
+          # Force push current HEAD to Space main
+          git push --force space HEAD:main
+
