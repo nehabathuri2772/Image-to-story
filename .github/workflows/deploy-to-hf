@@ -27,7 +27,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Configure LFS
+      - name: Configure LFS (safe no-op if unused)
         run: |
           git lfs install
           git lfs fetch --all || true
@@ -36,13 +36,10 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # IMPORTANT: the owner must match the Space owner exactly (case-sensitive).
           git remote remove space 2>/dev/null || true
           git remote add space "https://nehabathuri:${HF_TOKEN}@huggingface.co/spaces/nehabathuri/Image-to-Story"
           git remote -v
 
       - name: Push to Space main
         run: |
-          # Force push current HEAD to Space main
           git push --force space HEAD:main
-
