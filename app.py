@@ -194,12 +194,12 @@ THEME = gr.themes.Soft(
     neutral_hue=gr.themes.colors.gray,
 )
 
-with gr.Blocks(css=CSS, theme=THEME, title="Lightweight Image → Story (Local)") as demo:
+with gr.Blocks(css=CSS, theme=THEME, title="Image → Story") as demo:
     with gr.Column(elem_id="col"):
         gr.Markdown(
             "<div style='text-align:center'>"
             "<h1>Lightweight Image → Story</h1>"
-            "<p class='muted' style='margin-top:-4px'>Small captioner + small LLM, runs fully local on CPU.</p>"
+            "<p class='muted' style='margin-top:-4px'>Generate your story with the image tailored to your preferences.</p>"
             "</div>"
         )
 
