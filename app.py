@@ -259,4 +259,4 @@ with gr.Blocks(css=CSS, theme=THEME, title="Image → Story") as demo:
         )
 
 if __name__ == "__main__":
-    demo.queue().launch(ssr_mode=False)
+    demo.queue().launch()
